@@ -1,12 +1,48 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useState } from 'react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import Dashboard from '@/components/Dashboard';
+import TestEmail from '@/components/TestEmail';
 
 const Index = () => {
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const handleCaseCreated = () => {
+    // Force dashboard refresh when new case is created
+    setRefreshKey(prev => prev + 1);
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
+    <div className="min-h-screen bg-background">
+      <Tabs defaultValue="dashboard" className="w-full">
+        <div className="vvs-header text-white py-4">
+          <div className="vvs-container">
+            <TabsList className="bg-white/20 border-0">
+              <TabsTrigger 
+                value="dashboard" 
+                className="text-white data-[state=active]:bg-white data-[state=active]:text-primary"
+              >
+                Dashboard
+              </TabsTrigger>
+              <TabsTrigger 
+                value="test" 
+                className="text-white data-[state=active]:bg-white data-[state=active]:text-primary"
+              >
+                Test System
+              </TabsTrigger>
+            </TabsList>
+          </div>
+        </div>
+
+        <TabsContent value="dashboard" className="mt-0">
+          <Dashboard key={refreshKey} />
+        </TabsContent>
+        
+        <TabsContent value="test" className="mt-0">
+          <div className="vvs-container py-8">
+            <TestEmail onCaseCreated={handleCaseCreated} />
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

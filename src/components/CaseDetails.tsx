@@ -1,0 +1,271 @@
+import { useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { Case } from "@/types";
+import { formatDate, formatCurrency, getProjectTypeLabel } from "@/lib/valentin-config";
+import { db } from "@/lib/supabase-client";
+import { ArrowLeft, Brain, Calculator, CheckCircle } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import QuoteViewer from "./QuoteViewer";
+
+interface CaseDetailsProps {
+  case: Case;
+  onBack: () => void;
+  onUpdate: () => void;
+}
+
+export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDetailsProps) {
+  const [loading, setLoading] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [calculating, setCalculating] = useState(false);
+  const { toast } = useToast();
+
+  const handleAnalyze = async () => {
+    setAnalyzing(true);
+    try {
+      const response = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/analyze-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
+        },
+        body: JSON.stringify({
+          emailContent: caseData.description,
+          subject: caseData.subject
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('AI analysis failed');
+      }
+
+      const analysisResult = await response.json();
+
+      // Update case with analysis
+      await db.updateCase(caseData.id, {
+        extracted_data: analysisResult,
+        status: 'analyzed'
+      });
+
+      toast({
+        title: "AI Analyse Færdig",
+        description: "Sagen er nu analyseret og klar til tilbudsgenerering"
+      });
+
+      onUpdate();
+    } catch (error) {
+      console.error('Analysis failed:', error);
+      toast({
+        title: "Fejl",
+        description: "AI analyse fejlede",
+        variant: "destructive"
+      });
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleGenerateQuote = async () => {
+    setCalculating(true);
+    try {
+      const response = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/calculate-quote', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
+        },
+        body: JSON.stringify({
+          caseId: caseData.id
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Quote calculation failed');
+      }
+
+      const result = await response.json();
+
+      toast({
+        title: "Tilbud Genereret",
+        description: `Tilbud ${result.quote.quote_number} er klar`
+      });
+
+      onUpdate();
+    } catch (error) {
+      console.error('Quote calculation failed:', error);
+      toast({
+        title: "Fejl",
+        description: "Tilbudsgenerering fejlede",
+        variant: "destructive"
+      });
+    } finally {
+      setCalculating(false);
+    }
+  };
+
+  const hasQuote = caseData.quotes && caseData.quotes.length > 0;
+
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="vvs-header text-white py-6">
+        <div className="vvs-container">
+          <div className="flex items-center gap-3">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={onBack}
+              className="text-white hover:bg-white/20"
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Tilbage
+            </Button>
+            <div>
+              <h1 className="text-2xl font-bold">{caseData.subject || 'Sag Detaljer'}</h1>
+              <div className="flex items-center gap-2 mt-1">
+                <Badge className={`vvs-status-${caseData.status}`}>
+                  {caseData.status}
+                </Badge>
+                {caseData.urgency !== 'normal' && (
+                  <Badge className={`vvs-urgency-${caseData.urgency}`}>
+                    {caseData.urgency}
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="vvs-container py-8 space-y-6">
+        {/* Case Information */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Sag Information</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <h4 className="font-medium mb-2">Beskrivelse</h4>
+              <p className="text-muted-foreground">{caseData.description}</p>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <h4 className="font-medium mb-1">Oprettet</h4>
+                <p className="text-sm text-muted-foreground">{formatDate(caseData.created_at)}</p>
+              </div>
+              
+              {caseData.address && (
+                <div>
+                  <h4 className="font-medium mb-1">Adresse</h4>
+                  <p className="text-sm text-muted-foreground">{caseData.address}</p>
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
+            <div className="flex gap-3">
+              {caseData.status === 'new' && (
+                <Button 
+                  onClick={handleAnalyze} 
+                  disabled={analyzing}
+                  className="vvs-button-primary"
+                >
+                  <Brain className="h-4 w-4 mr-2" />
+                  {analyzing ? 'Analyserer...' : 'Analyser med AI'}
+                </Button>
+              )}
+
+              {caseData.status === 'analyzed' && caseData.extracted_data && (
+                <Button 
+                  onClick={handleGenerateQuote} 
+                  disabled={calculating}
+                  className="vvs-button-primary"
+                >
+                  <Calculator className="h-4 w-4 mr-2" />
+                  {calculating ? 'Beregner...' : 'Generer Tilbud'}
+                </Button>
+              )}
+
+              {hasQuote && (
+                <div className="flex items-center gap-2 text-green-600">
+                  <CheckCircle className="h-4 w-4" />
+                  <span className="text-sm font-medium">Tilbud genereret</span>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* AI Analysis Results */}
+        {caseData.extracted_data && (
+          <Card>
+            <CardHeader>
+              <CardTitle>AI Analyse Resultat</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {caseData.extracted_data.customer && (
+                <div>
+                  <h4 className="font-medium mb-2">Kunde Information</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                    {caseData.extracted_data.customer.name && (
+                      <div><span className="font-medium">Navn:</span> {caseData.extracted_data.customer.name}</div>
+                    )}
+                    {caseData.extracted_data.customer.email && (
+                      <div><span className="font-medium">Email:</span> {caseData.extracted_data.customer.email}</div>
+                    )}
+                    {caseData.extracted_data.customer.phone && (
+                      <div><span className="font-medium">Telefon:</span> {caseData.extracted_data.customer.phone}</div>
+                    )}
+                    {caseData.extracted_data.customer.customer_type && (
+                      <div><span className="font-medium">Type:</span> {caseData.extracted_data.customer.customer_type}</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {caseData.extracted_data.project && (
+                <div>
+                  <h4 className="font-medium mb-2">Projekt Detaljer</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                    <div><span className="font-medium">Type:</span> {getProjectTypeLabel(caseData.extracted_data.project.type)}</div>
+                    <div><span className="font-medium">Størrelse:</span> {caseData.extracted_data.project.estimated_size} {caseData.extracted_data.project.size_unit}</div>
+                    <div><span className="font-medium">Kompleksitet:</span> {caseData.extracted_data.project.complexity}</div>
+                    <div><span className="font-medium">Hastende:</span> {caseData.extracted_data.project.urgency}</div>
+                  </div>
+                  {caseData.extracted_data.project.description && (
+                    <div className="mt-2">
+                      <span className="font-medium">Beskrivelse:</span>
+                      <p className="text-muted-foreground mt-1">{caseData.extracted_data.project.description}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {caseData.extracted_data.pricing_hints && (
+                <div>
+                  <h4 className="font-medium mb-2">Prisberegning Hints</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+                    <div><span className="font-medium">Estimerede timer:</span> {caseData.extracted_data.pricing_hints.base_hours_estimate}</div>
+                    <div><span className="font-medium">Kompleksitet multiplikator:</span> {caseData.extracted_data.pricing_hints.complexity_multiplier}x</div>
+                    <div><span className="font-medium">Materiale kompleksitet:</span> {caseData.extracted_data.pricing_hints.material_complexity}</div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Quote Viewer */}
+        {hasQuote && (
+          <QuoteViewer 
+            quote={caseData.quotes![0]} 
+            onUpdate={onUpdate}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
