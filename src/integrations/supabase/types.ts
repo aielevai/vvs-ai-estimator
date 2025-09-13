@@ -14,7 +14,240 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      cases: {
+        Row: {
+          address: string | null
+          city: string | null
+          created_at: string | null
+          customer_id: string | null
+          description: string | null
+          email_content: string | null
+          extracted_data: Json | null
+          id: string
+          postal_code: string | null
+          status: string | null
+          subject: string | null
+          task_type: string | null
+          updated_at: string | null
+          urgency: string | null
+        }
+        Insert: {
+          address?: string | null
+          city?: string | null
+          created_at?: string | null
+          customer_id?: string | null
+          description?: string | null
+          email_content?: string | null
+          extracted_data?: Json | null
+          id?: string
+          postal_code?: string | null
+          status?: string | null
+          subject?: string | null
+          task_type?: string | null
+          updated_at?: string | null
+          urgency?: string | null
+        }
+        Update: {
+          address?: string | null
+          city?: string | null
+          created_at?: string | null
+          customer_id?: string | null
+          description?: string | null
+          email_content?: string | null
+          extracted_data?: Json | null
+          id?: string
+          postal_code?: string | null
+          status?: string | null
+          subject?: string | null
+          task_type?: string | null
+          updated_at?: string | null
+          urgency?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cases_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      customers: {
+        Row: {
+          address: string | null
+          city: string | null
+          created_at: string | null
+          email: string | null
+          id: string
+          name: string
+          phone: string | null
+          postal_code: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          address?: string | null
+          city?: string | null
+          created_at?: string | null
+          email?: string | null
+          id?: string
+          name: string
+          phone?: string | null
+          postal_code?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          address?: string | null
+          city?: string | null
+          created_at?: string | null
+          email?: string | null
+          id?: string
+          name?: string
+          phone?: string | null
+          postal_code?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      quote_lines: {
+        Row: {
+          description: string
+          id: string
+          labor_hours: number | null
+          line_type: string | null
+          material_code: string | null
+          quantity: number | null
+          quote_id: string | null
+          sort_order: number | null
+          total_price: number | null
+          unit_price: number | null
+        }
+        Insert: {
+          description: string
+          id?: string
+          labor_hours?: number | null
+          line_type?: string | null
+          material_code?: string | null
+          quantity?: number | null
+          quote_id?: string | null
+          sort_order?: number | null
+          total_price?: number | null
+          unit_price?: number | null
+        }
+        Update: {
+          description?: string
+          id?: string
+          labor_hours?: number | null
+          line_type?: string | null
+          material_code?: string | null
+          quantity?: number | null
+          quote_id?: string | null
+          sort_order?: number | null
+          total_price?: number | null
+          unit_price?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_lines_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quotes: {
+        Row: {
+          case_id: string | null
+          created_at: string | null
+          id: string
+          labor_hours: number | null
+          quote_number: string | null
+          service_vehicle_cost: number | null
+          status: string | null
+          subtotal: number | null
+          total_amount: number | null
+          travel_cost: number | null
+          travel_time: number | null
+          updated_at: string | null
+          valid_until: string | null
+          vat_amount: number | null
+        }
+        Insert: {
+          case_id?: string | null
+          created_at?: string | null
+          id?: string
+          labor_hours?: number | null
+          quote_number?: string | null
+          service_vehicle_cost?: number | null
+          status?: string | null
+          subtotal?: number | null
+          total_amount?: number | null
+          travel_cost?: number | null
+          travel_time?: number | null
+          updated_at?: string | null
+          valid_until?: string | null
+          vat_amount?: number | null
+        }
+        Update: {
+          case_id?: string | null
+          created_at?: string | null
+          id?: string
+          labor_hours?: number | null
+          quote_number?: string | null
+          service_vehicle_cost?: number | null
+          status?: string | null
+          subtotal?: number | null
+          total_amount?: number | null
+          travel_cost?: number | null
+          travel_time?: number | null
+          updated_at?: string | null
+          valid_until?: string | null
+          vat_amount?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quotes_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      supplier_prices: {
+        Row: {
+          base_price: number | null
+          description: string | null
+          final_price: number | null
+          id: string
+          last_updated: string | null
+          product_code: string | null
+          supplier_id: string | null
+          valentin_mapping: string | null
+        }
+        Insert: {
+          base_price?: number | null
+          description?: string | null
+          final_price?: number | null
+          id?: string
+          last_updated?: string | null
+          product_code?: string | null
+          supplier_id?: string | null
+          valentin_mapping?: string | null
+        }
+        Update: {
+          base_price?: number | null
+          description?: string | null
+          final_price?: number | null
+          id?: string
+          last_updated?: string | null
+          product_code?: string | null
+          supplier_id?: string | null
+          valentin_mapping?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
