@@ -103,7 +103,7 @@ serve(async (req) => {
       },
       body: JSON.stringify({
         model: 'gpt-5-2025-08-07',
-        max_completion_tokens: 3000,
+        max_completion_tokens: 12000,
         messages: [
           { role: 'system', content: VALENTIN_AI_PROMPT },
           { role: 'user', content }
