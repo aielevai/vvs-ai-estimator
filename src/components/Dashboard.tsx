@@ -57,6 +57,15 @@ export default function Dashboard() {
 
   const handleDeleteCase = async (caseId: string) => {
     try {
+      // First delete related quotes
+      const { error: quotesError } = await supabase
+        .from('quotes')
+        .delete()
+        .eq('case_id', caseId);
+
+      if (quotesError) throw quotesError;
+
+      // Then delete the case
       const { error } = await supabase
         .from('cases')
         .delete()
@@ -66,10 +75,11 @@ export default function Dashboard() {
 
       toast({
         title: "Sag Slettet",
-        description: "Sagen er blevet slettet"
+        description: "Sagen og tilhørende tilbud er blevet slettet"
       });
       loadCases();
     } catch (error) {
+      console.error('Delete error:', error);
       toast({
         title: "Fejl",
         description: "Kunne ikke slette sag",
