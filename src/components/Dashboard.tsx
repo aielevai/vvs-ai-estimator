@@ -57,7 +57,17 @@ export default function Dashboard() {
 
   const handleDeleteCase = async (caseId: string) => {
     try {
-      // First delete related quotes
+      // First delete quote lines (they reference quotes)
+      const { error: quoteLinesError } = await supabase
+        .from('quote_lines')
+        .delete()
+        .in('quote_id', 
+          (await supabase.from('quotes').select('id').eq('case_id', caseId)).data?.map(q => q.id) || []
+        );
+
+      if (quoteLinesError) throw quoteLinesError;
+
+      // Then delete related quotes
       const { error: quotesError } = await supabase
         .from('quotes')
         .delete()
@@ -65,7 +75,7 @@ export default function Dashboard() {
 
       if (quotesError) throw quotesError;
 
-      // Then delete the case
+      // Finally delete the case
       const { error } = await supabase
         .from('cases')
         .delete()
@@ -75,7 +85,7 @@ export default function Dashboard() {
 
       toast({
         title: "Sag Slettet",
-        description: "Sagen og tilhørende tilbud er blevet slettet"
+        description: "Sagen og alle tilhørende data er blevet slettet"
       });
       loadCases();
     } catch (error) {
