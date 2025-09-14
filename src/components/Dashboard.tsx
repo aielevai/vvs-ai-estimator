@@ -5,9 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { db } from "@/lib/supabase-client";
 import { Case } from "@/types";
 import { formatDate, getProjectTypeLabel } from "@/lib/valentin-config";
-import { Wrench, Mail, TrendingUp, Clock } from "lucide-react";
+import { Wrench, Mail, TrendingUp, Clock, Trash2, Edit, Check, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import CaseDetails from "./CaseDetails";
+import { supabase } from "@/integrations/supabase/client";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
 export default function Dashboard() {
   const [cases, setCases] = useState<Case[]>([]);
@@ -32,6 +34,66 @@ export default function Dashboard() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleApproveCase = async (caseId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await db.updateCase(caseId, { status: 'approved' });
+      toast({
+        title: "Tilbud Godkendt",
+        description: "Tilbuddet er nu låst og godkendt"
+      });
+      loadCases();
+    } catch (error) {
+      toast({
+        title: "Fejl",
+        description: "Kunne ikke godkende tilbud",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleDeleteCase = async (caseId: string) => {
+    try {
+      const { error } = await supabase
+        .from('cases')
+        .delete()
+        .eq('id', caseId);
+
+      if (error) throw error;
+
+      toast({
+        title: "Sag Slettet",
+        description: "Sagen er blevet slettet"
+      });
+      loadCases();
+    } catch (error) {
+      toast({
+        title: "Fejl",
+        description: "Kunne ikke slette sag",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const triggerGmailSync = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('gmail-sync');
+      if (error) throw error;
+      
+      toast({
+        title: "Gmail Sync",
+        description: `Behandlede ${data.processed || 0} nye emails`
+      });
+      loadCases();
+    } catch (error) {
+      toast({
+        title: "Fejl",
+        description: "Kunne ikke synkronisere emails",
+        variant: "destructive"
+      });
     }
   };
 
@@ -108,8 +170,17 @@ export default function Dashboard() {
         </div>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Seneste Sager</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>Seneste Sager (Automatisk Behandling)</CardTitle>
+            <Button 
+              onClick={triggerGmailSync}
+              size="sm"
+              variant="outline"
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Synk Gmail Nu
+            </Button>
           </CardHeader>
           <CardContent>
             {loading ? (
@@ -122,13 +193,16 @@ export default function Dashboard() {
               <div className="space-y-4">
                 {cases.map((case_) => (
                   <div key={case_.id} 
-                       className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 cursor-pointer"
-                       onClick={() => setSelectedCase(case_)}>
-                    <div className="flex-1">
+                       className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50"
+                       >
+                    <div className="flex-1 cursor-pointer" onClick={() => setSelectedCase(case_)}>
                       <div className="flex items-center gap-2 mb-1">
                         <h3 className="font-medium">{case_.subject || 'Ingen emne'}</h3>
                         <Badge className={`vvs-status-${case_.status}`}>
-                          {case_.status}
+                          {case_.status === 'new' ? 'Behandles automatisk...' : 
+                           case_.status === 'analyzed' ? 'Analyseret' :
+                           case_.status === 'quoted' ? 'Tilbud klar' :
+                           case_.status === 'approved' ? 'Godkendt' : case_.status}
                         </Badge>
                         {case_.urgency !== 'normal' && (
                           <Badge className={`vvs-urgency-${case_.urgency}`}>
@@ -145,16 +219,70 @@ export default function Dashboard() {
                           {case_.extracted_data.project.estimated_size} {case_.extracted_data.project.size_unit}
                         </p>
                       )}
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm text-muted-foreground">
-                        {formatDate(case_.created_at)}
-                      </div>
                       {case_.quotes && case_.quotes.length > 0 && (
-                        <div className="text-sm font-medium text-green-600">
-                          Tilbud klar
-                        </div>
+                        <p className="text-sm font-medium text-green-600 mt-1">
+                          Tilbud: {case_.quotes[0].total_amount?.toLocaleString('da-DK')} kr inkl. moms
+                        </p>
                       )}
+                    </div>
+                    <div className="flex items-center gap-2 ml-4">
+                      <div className="text-right mr-4">
+                        <div className="text-sm text-muted-foreground">
+                          {formatDate(case_.created_at)}
+                        </div>
+                      </div>
+                      
+                      {case_.status === 'quoted' && (
+                        <Button
+                          size="sm"
+                          onClick={(e) => handleApproveCase(case_.id, e)}
+                          className="flex items-center gap-1"
+                        >
+                          <Check className="h-3 w-3" />
+                          Godkend
+                        </Button>
+                      )}
+                      
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setSelectedCase(case_)}
+                        className="flex items-center gap-1"
+                      >
+                        <Edit className="h-3 w-3" />
+                        Rediger
+                      </Button>
+                      
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="flex items-center gap-1"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            Slet
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Slet sag</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Er du sikker på, at du vil slette denne sag? Denne handling kan ikke fortrydes.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Annuller</AlertDialogCancel>
+                            <AlertDialogAction 
+                              onClick={() => handleDeleteCase(case_.id)}
+                              className="bg-destructive text-destructive-foreground"
+                            >
+                              Slet sag
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   </div>
                 ))}
