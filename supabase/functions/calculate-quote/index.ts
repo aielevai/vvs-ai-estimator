@@ -177,8 +177,13 @@ function calculateProjectPrice(analysis: any): any {
   const size = Number(analysis.project.estimated_size || 1);
   const complexity = analysis.project.complexity || 'medium';
 
+  console.log(`Calculating price for: ${projectType}, size: ${size}, complexity: ${complexity}`);
+
   const config = VALENTIN_PRICING_LOGIC.hoursPerProjectType[projectType as keyof typeof VALENTIN_PRICING_LOGIC.hoursPerProjectType];
-  if (!config) return createFallbackPrice();
+  if (!config) {
+    console.log(`No config found for project type: ${projectType}, using fallback`);
+    return createFallbackPrice();
+  }
 
   // Calculate hours
   let hours = (config.baseHours || 0) * size;
@@ -188,6 +193,28 @@ function calculateProjectPrice(analysis: any): any {
 
   const complexityMultiplier = VALENTIN_PRICING_LOGIC.complexityMultipliers[complexity as keyof typeof VALENTIN_PRICING_LOGIC.complexityMultipliers] || 1.0;
   hours = Math.round(hours * complexityMultiplier * 2) / 2;
+
+  // Sanity check: Cap unrealistic hour estimates
+  const maxHoursPerType = {
+    bathroom_renovation: 200,
+    kitchen_plumbing: 100,
+    pipe_installation: 150,
+    district_heating: 40,
+    floor_heating: 200,
+    radiator_installation: 80,
+    service_call: 50
+  };
+  
+  const maxHours = maxHoursPerType[projectType as keyof typeof maxHoursPerType] || 100;
+  if (hours > maxHours) {
+    console.log(`WARNING: Capping unrealistic hours estimate from ${hours} to ${maxHours} for project type ${projectType}`);
+    hours = maxHours;
+  }
+  
+  if (hours < 1) {
+    console.log(`WARNING: Hours too low (${hours}), setting minimum to 2 hours`);
+    hours = 2;
+  }
 
   // Calculate costs
   const laborCost = hours * VALENTIN_PRICING_LOGIC.baseRates.hourlyRate;

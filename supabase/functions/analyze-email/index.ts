@@ -13,8 +13,11 @@ Returnér KUN gyldig JSON (uden kommentarer) med felterne beskrevet nedenfor.
 SPECIALER:
 - Standard VVS, Service, Varme (fjern/gulv), m.m.
 
-STØRRELSER (typisk):
-- Bad: 8-15 m² • Køkken: 4-8 m² • Rør: 5-50 m • Gulvvarme: 20-150 m²
+STØRRELSER (typisk) - VIGTIGT: Skelne mellem boligstørrelse og projektomfang:
+- Bad: 8-15 m² • Køkken: 4-8 m² • Rør: 5-50 meter • Gulvvarme: 20-150 m²
+- Fjernvarme: ALTID 1 tilslutning pr. bolig (uanset boligstørrelse)
+- Varmepumpe: 1 installation pr. bolig
+- Radiatorer: Antal enheder (typisk 3-8 pr. bolig)
 
 KOMPLEKSITET:
 - simple, medium, complex (gamle anlæg før 1980, kælder/krybekælder), emergency
@@ -23,6 +26,15 @@ NØGLEORD → STØRRELSE:
 - "lille/small" = 70% af gennemsnit
 - "stor/stort/large" = 140%
 - "hele/komplet" = 150%
+
+PROJEKTTYPE MAPPNING - Vælg den MEST specifikke type:
+- Hvis kun fjernvarme nævnes → "district_heating" (1 connection)
+- Hvis kun varmepumpe nævnes → "service_call" (1 job) 
+- Hvis både varmepumpe OG fjernvarme → "district_heating" (1 connection)
+- Bad renovation → "bathroom_renovation" (m2)
+- Køkkenrør → "kitchen_plumbing" (m2)
+- Gulvvarme → "floor_heating" (m2)
+- Rørinstallation → "pipe_installation" (meter)
 
 UDFALD skal være præcis JSON struktur:
 {
@@ -183,6 +195,20 @@ function enhanceAnalysis(ai: any, email: string) {
     }
   }
 
+  // Validate and fix size unit mismatch for project types
+  if (ai.project.type === 'district_heating' && ai.project.size_unit !== 'connection') {
+    ai.project.estimated_size = 1; // Always 1 connection for district heating
+    ai.project.size_unit = 'connection';
+  }
+  
+  if (ai.project.type === 'pipe_installation' && ai.project.size_unit !== 'meter') {
+    ai.project.size_unit = 'meter';
+    // If size seems too large for pipe work, cap it
+    if (ai.project.estimated_size > 100) {
+      ai.project.estimated_size = Math.min(ai.project.estimated_size, 50);
+    }
+  }
+
   // Enhance complexity detection
   if (!ai.project.complexity) ai.project.complexity = 'medium';
   if (text.includes('gammel') || text.includes('196') || text.includes('197')) {
@@ -207,6 +233,23 @@ function enhanceAnalysis(ai: any, email: string) {
     hours += projectConfig.additionalPerUnit * (ai.project.estimated_size || 1);
   }
   hours = Math.round(hours * ai.pricing_hints.complexity_multiplier * 2) / 2;
+  
+  // Sanity check: Cap unrealistic hour estimates
+  const maxHoursPerType = {
+    bathroom_renovation: 200,
+    kitchen_plumbing: 100,
+    pipe_installation: 150,
+    district_heating: 40,
+    floor_heating: 200,
+    radiator_installation: 80,
+    service_call: 50
+  };
+  
+  const maxHours = maxHoursPerType[ai.project.type as keyof typeof maxHoursPerType] || 100;
+  if (hours > maxHours) {
+    console.log(`WARNING: Capping unrealistic hours estimate from ${hours} to ${maxHours} for project type ${ai.project.type}`);
+    hours = maxHours;
+  }
   
   ai.pricing_hints.base_hours_estimate = hours;
   ai.pricing_hints.material_complexity = ai.project.complexity === 'complex' ? 'high' : 'standard';
