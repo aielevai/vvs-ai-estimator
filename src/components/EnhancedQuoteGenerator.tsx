@@ -36,6 +36,8 @@ interface QuoteAnalysis {
   };
   explanations: string[];
   confidence: number;
+  quoteId?: string;
+  caseId?: string;
 }
 
 export default function EnhancedQuoteGenerator() {
@@ -61,8 +63,8 @@ export default function EnhancedQuoteGenerator() {
       // Step 1: Analyze email content
       const { data: emailAnalysis, error: emailError } = await supabase.functions.invoke('analyze-email', {
         body: { 
-          emailContent: description,
-          subject: 'Enhanced Quote Request'
+          subject: 'Enhanced Quote Request',
+          content: description
         }
       });
 
@@ -70,7 +72,32 @@ export default function EnhancedQuoteGenerator() {
 
       console.log('Email analysis result:', emailAnalysis);
 
-      // Step 2: Get historical analysis
+      // Step 2: Create a real case first
+      const { data: newCase, error: caseError } = await supabase
+        .from('cases')
+        .insert({
+          subject: 'Enhanced Quote Request',
+          description: description,
+          extracted_data: emailAnalysis,
+          status: 'analyzed'
+        })
+        .select()
+        .single();
+
+      if (caseError) throw caseError;
+
+      // Step 3: Generate actual quote using the calculate-quote function
+      const { data: quoteData, error: quoteError } = await supabase.functions.invoke('calculate-quote', {
+        body: {
+          caseId: newCase.id
+        }
+      });
+
+      if (quoteError) throw quoteError;
+
+      console.log('Quote generated:', quoteData);
+
+      // Step 4: Get historical analysis for display
       const { data: historicalData, error: historicalError } = await supabase.functions.invoke('historical-analysis', {
         body: {
           projectType: emailAnalysis.project?.type || 'service_call',
@@ -82,76 +109,70 @@ export default function EnhancedQuoteGenerator() {
 
       if (historicalError) throw historicalError;
 
-      console.log('Historical analysis result:', historicalData);
-
-      // Step 3: Enhanced material lookup
+      // Step 5: Get material data for display
       const { data: materialData, error: materialError } = await supabase.functions.invoke('material-lookup', {
         body: {
           projectType: emailAnalysis.project?.type || 'service_call',
-          description: description,
+          projectDescription: description,
           estimatedSize: emailAnalysis.project?.estimated_size || 1,
           complexity: emailAnalysis.project?.complexity || 'medium',
-          technicalAnalysis: emailAnalysis.technical_analysis
+          materialeAnalyse: emailAnalysis.materiale_analyse
         }
       });
 
       if (materialError) throw materialError;
 
-      console.log('Material lookup result:', materialData);
-
-      // Step 4: Generate comprehensive quote
-      const { data: quoteData, error: quoteError } = await supabase.functions.invoke('calculate-quote', {
-        body: {
-          enhancedAnalysis: emailAnalysis,
-          historicalInsights: historicalData,
-          intelligentMaterials: materialData
-        }
-      });
-
-      if (quoteError) throw quoteError;
-
-      console.log('Final quote result:', quoteData);
-
       // Combine all insights into final analysis
       const finalAnalysis: QuoteAnalysis = {
-        bom_suggestions: materialData.materials || [],
-        hours: historicalData.analysis?.time_estimate || {
-          median: 4,
-          p75: 6,
-          final_estimate: 5,
-          risk_hours: 1,
-          confidence: 0.6
+        bom_suggestions: materialData.materials?.map((m: any) => ({
+          sku: m.product_code,
+          title: m.description,
+          suggested_quantity: m.quantity,
+          confidence: 0.8,
+          unit_price_ex_vat: m.unit_price,
+          unit: 'stk',
+          reasoning: m.reasoning
+        })) || [],
+        hours: {
+          median: historicalData.median_hours || 4,
+          p75: historicalData.p75_hours || 6,
+          final_estimate: quoteData.pricing_analysis?.total_hours || 5,
+          risk_hours: historicalData.risk_hours || 1,
+          confidence: historicalData.confidence || 0.6
         },
-        price_breakdown: quoteData.price_breakdown || {
-          materials_ex_vat: 0,
-          labor_ex_vat: 0,
-          service_van_ex_vat: 0,
-          total_ex_vat: 0
+        price_breakdown: {
+          materials_ex_vat: materialData.total_cost || 0,
+          labor_ex_vat: (quoteData.pricing_analysis?.total_hours || 0) * 550,
+          service_van_ex_vat: 65,
+          total_ex_vat: quoteData.quote?.subtotal || 0
         },
         explanations: [
-          ...historicalData.analysis?.insights || [],
-          ...materialData.explanations || [],
-          ...quoteData.explanations || []
+          `Baseret på ${historicalData.total_projects_analyzed || 0} historiske projekter`,
+          `AI har analyseret ${materialData.materials?.length || 0} materialer`,
+          `Tilbud ${quoteData.quote?.quote_number} er oprettet i systemet`,
+          ...(materialData.ai_reasoning ? [materialData.ai_reasoning] : [])
         ],
         confidence: (
-          (historicalData.analysis?.confidence || 0.5) + 
-          (materialData.confidence || 0.5) + 
-          (emailAnalysis.confidence || 0.5)
-        ) / 3
+          (historicalData.confidence || 0.5) + 
+          (materialData.materials?.length > 0 ? 0.8 : 0.4) + 
+          0.7
+        ) / 3,
+        quoteId: quoteData.quote?.id,
+        caseId: newCase.id
       };
 
       setAnalysis(finalAnalysis);
 
       toast({
         title: "Analyse gennemført",
-        description: `Quote genereret med ${Math.round(finalAnalysis.confidence * 100)}% konfidens`
+        description: `Tilbud ${quoteData.quote?.quote_number} genereret med ${Math.round(finalAnalysis.confidence * 100)}% konfidens`
       });
 
     } catch (error) {
       console.error('Enhanced quote generation error:', error);
       toast({
         title: "Fejl",
-        description: "Kunne ikke generere tilbud. Prøv igen.",
+        description: `Kunne ikke generere tilbud: ${(error as any).message}`,
         variant: "destructive"
       });
     } finally {
@@ -340,6 +361,33 @@ export default function EnhancedQuoteGenerator() {
                     </li>
                   ))}
                 </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Link to view actual quote */}
+          {analysis.quoteId && (
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Et faktisk tilbud er blevet oprettet med alle materialedetaljer
+                  </p>
+                  <Button 
+                    onClick={() => {
+                      // Switch to dashboard tab and trigger refresh
+                      const dashboardTab = document.querySelector('[value="dashboard"]');
+                      if (dashboardTab) {
+                        (dashboardTab as HTMLElement).click();
+                        setTimeout(() => window.location.reload(), 100);
+                      }
+                    }}
+                    className="w-full"
+                    variant="default"
+                  >
+                    Vis Detaljeret Tilbud med Materialelinjer
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           )}

@@ -85,7 +85,15 @@ serve(async (req) => {
     let aiMaterials;
     
     try {
-      aiMaterials = JSON.parse(aiData.choices[0].message.content);
+      const content = aiData.choices[0].message.content.trim();
+      console.log('Raw AI response content:', content);
+      
+      // Try to extract JSON from markdown code blocks if present
+      const jsonMatch = content.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
+      const jsonContent = jsonMatch ? jsonMatch[1] : content;
+      
+      aiMaterials = JSON.parse(jsonContent);
+      console.log('Successfully parsed AI materials:', aiMaterials);
     } catch (parseError) {
       console.error('Failed to parse AI response:', aiData.choices[0].message.content);
       throw new Error('Invalid AI response format');

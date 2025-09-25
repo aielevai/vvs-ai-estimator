@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Dashboard from '@/components/Dashboard';
 import TestEmail from '@/components/TestEmail';
+import EnhancedQuoteGenerator from '@/components/EnhancedQuoteGenerator';
 
 const Index = () => {
   const [refreshKey, setRefreshKey] = useState(0);
@@ -23,12 +24,18 @@ const Index = () => {
               >
                 Dashboard
               </TabsTrigger>
-              <TabsTrigger 
-                value="test" 
-                className="text-white data-[state=active]:bg-white data-[state=active]:text-primary"
-              >
-                Test System
-              </TabsTrigger>
+                <TabsTrigger 
+                  value="test" 
+                  className="text-white data-[state=active]:bg-white data-[state=active]:text-primary"
+                >
+                  Test System
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="enhanced" 
+                  className="text-white data-[state=active]:bg-white data-[state=active]:text-primary"
+                >
+                  AI Tilbud
+                </TabsTrigger>
             </TabsList>
           </div>
         </div>
@@ -40,6 +47,12 @@ const Index = () => {
         <TabsContent value="test" className="mt-0">
           <div className="vvs-container py-8">
             <TestEmail onCaseCreated={handleCaseCreated} />
+          </div>
+        </TabsContent>
+        
+        <TabsContent value="enhanced" className="mt-0">
+          <div className="vvs-container py-8">
+            <EnhancedQuoteGenerator />
           </div>
         </TabsContent>
       </Tabs>

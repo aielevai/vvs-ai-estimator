@@ -168,8 +168,9 @@ serve(async (req) => {
           quantity: material.quantity || 1,
           unit_price: material.unit_price || 0,
           total_price: material.total_price || 0,
+          material_code: material.product_code,
           sort_order: 10 + index,
-        });
+        } as any);
       });
     } else {
       // Fallback single material line
