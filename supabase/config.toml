@@ -21,3 +21,12 @@ verify_jwt = false
 
 [functions.import-csv-data]
 verify_jwt = false
+
+[functions.enhanced-data-import]
+verify_jwt = false
+
+[functions.hybrid-search]
+verify_jwt = false
+
+[functions.historical-analysis]
+verify_jwt = false
