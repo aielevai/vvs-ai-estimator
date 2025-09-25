@@ -14,6 +14,50 @@ export type Database = {
   }
   public: {
     Tables: {
+      bom_suggestions: {
+        Row: {
+          confidence: number | null
+          created_at: string
+          historical_frequency: number | null
+          id: string
+          product_code: string | null
+          project_intelligence_id: string | null
+          reasoning: string | null
+          suggested_quantity: number | null
+          unit_price: number | null
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string
+          historical_frequency?: number | null
+          id?: string
+          product_code?: string | null
+          project_intelligence_id?: string | null
+          reasoning?: string | null
+          suggested_quantity?: number | null
+          unit_price?: number | null
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string
+          historical_frequency?: number | null
+          id?: string
+          product_code?: string | null
+          project_intelligence_id?: string | null
+          reasoning?: string | null
+          suggested_quantity?: number | null
+          unit_price?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bom_suggestions_project_intelligence_id_fkey"
+            columns: ["project_intelligence_id"]
+            isOneToOne: false
+            referencedRelation: "project_intelligence"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cases: {
         Row: {
           address: string | null
@@ -108,6 +152,223 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: []
+      }
+      enhanced_supplier_prices: {
+        Row: {
+          created_at: string
+          ean_id: string | null
+          gross_price: number | null
+          id: string
+          image_url: string | null
+          is_on_stock: boolean | null
+          leadtime: number | null
+          link: string | null
+          long_description: string | null
+          net_price: number | null
+          normalized_text: string | null
+          ordering_factor_1: number | null
+          ordering_factor_2: number | null
+          ordering_unit_1: string | null
+          ordering_unit_2: string | null
+          price_quantity: number | null
+          price_unit: string | null
+          search_vector: unknown | null
+          short_description: string | null
+          supplier_item_id: string | null
+          vvs_number: string | null
+        }
+        Insert: {
+          created_at?: string
+          ean_id?: string | null
+          gross_price?: number | null
+          id?: string
+          image_url?: string | null
+          is_on_stock?: boolean | null
+          leadtime?: number | null
+          link?: string | null
+          long_description?: string | null
+          net_price?: number | null
+          normalized_text?: string | null
+          ordering_factor_1?: number | null
+          ordering_factor_2?: number | null
+          ordering_unit_1?: string | null
+          ordering_unit_2?: string | null
+          price_quantity?: number | null
+          price_unit?: string | null
+          search_vector?: unknown | null
+          short_description?: string | null
+          supplier_item_id?: string | null
+          vvs_number?: string | null
+        }
+        Update: {
+          created_at?: string
+          ean_id?: string | null
+          gross_price?: number | null
+          id?: string
+          image_url?: string | null
+          is_on_stock?: boolean | null
+          leadtime?: number | null
+          link?: string | null
+          long_description?: string | null
+          net_price?: number | null
+          normalized_text?: string | null
+          ordering_factor_1?: number | null
+          ordering_factor_2?: number | null
+          ordering_unit_1?: string | null
+          ordering_unit_2?: string | null
+          price_quantity?: number | null
+          price_unit?: string | null
+          search_vector?: unknown | null
+          short_description?: string | null
+          supplier_item_id?: string | null
+          vvs_number?: string | null
+        }
+        Relationships: []
+      }
+      historical_material_lines: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          line_total: number | null
+          normalized_description: string | null
+          product_code: string | null
+          project_id: string | null
+          quantity: number | null
+          unit: string | null
+          unit_price: number | null
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          line_total?: number | null
+          normalized_description?: string | null
+          product_code?: string | null
+          project_id?: string | null
+          quantity?: number | null
+          unit?: string | null
+          unit_price?: number | null
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          line_total?: number | null
+          normalized_description?: string | null
+          product_code?: string | null
+          project_id?: string | null
+          quantity?: number | null
+          unit?: string | null
+          unit_price?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "historical_material_lines_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "historical_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      historical_projects: {
+        Row: {
+          complexity_signals: Json | null
+          created_at: string
+          customer_ref: string | null
+          date_source: string | null
+          id: string
+          line_date_assumed: string | null
+          project_description: string | null
+          project_type: string
+          report_from: string | null
+          report_to: string | null
+          total_hours: number | null
+          total_materials_cost: number | null
+          total_project_cost: number | null
+        }
+        Insert: {
+          complexity_signals?: Json | null
+          created_at?: string
+          customer_ref?: string | null
+          date_source?: string | null
+          id?: string
+          line_date_assumed?: string | null
+          project_description?: string | null
+          project_type: string
+          report_from?: string | null
+          report_to?: string | null
+          total_hours?: number | null
+          total_materials_cost?: number | null
+          total_project_cost?: number | null
+        }
+        Update: {
+          complexity_signals?: Json | null
+          created_at?: string
+          customer_ref?: string | null
+          date_source?: string | null
+          id?: string
+          line_date_assumed?: string | null
+          project_description?: string | null
+          project_type?: string
+          report_from?: string | null
+          report_to?: string | null
+          total_hours?: number | null
+          total_materials_cost?: number | null
+          total_project_cost?: number | null
+        }
+        Relationships: []
+      }
+      project_intelligence: {
+        Row: {
+          bom_suggestions: Json | null
+          case_id: string | null
+          complexity_score: number | null
+          confidence_score: number | null
+          created_at: string
+          estimated_hours: number | null
+          explanations: Json | null
+          id: string
+          intent: string | null
+          risk_hours: number | null
+          signals: Json | null
+        }
+        Insert: {
+          bom_suggestions?: Json | null
+          case_id?: string | null
+          complexity_score?: number | null
+          confidence_score?: number | null
+          created_at?: string
+          estimated_hours?: number | null
+          explanations?: Json | null
+          id?: string
+          intent?: string | null
+          risk_hours?: number | null
+          signals?: Json | null
+        }
+        Update: {
+          bom_suggestions?: Json | null
+          case_id?: string | null
+          complexity_score?: number | null
+          confidence_score?: number | null
+          created_at?: string
+          estimated_hours?: number | null
+          explanations?: Json | null
+          id?: string
+          intent?: string | null
+          risk_hours?: number | null
+          signals?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_intelligence_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       quote_lines: {
         Row: {
