@@ -80,8 +80,32 @@ serve(async (req) => {
       );
     }
 
-    // Calculate pricing
-    const priceBreakdown = calculateProjectPrice(caseData.extracted_data);
+    // Get AI-powered material selection
+    console.log('Calling material-lookup for intelligent pricing...');
+    
+    let materialLookup = null;
+    try {
+      const materialResponse = await supabase.functions.invoke('material-lookup', {
+        body: {
+          projectType: caseData.extracted_data?.project?.type,
+          projectDescription: caseData.extracted_data?.project?.description || caseData.description || 'VVS projekt',
+          estimatedSize: caseData.extracted_data?.project?.estimated_size,
+          complexity: caseData.extracted_data?.project?.complexity
+        }
+      });
+      
+      if (materialResponse.data && !materialResponse.error) {
+        materialLookup = materialResponse.data;
+        console.log(`Material lookup successful: ${materialLookup.materials?.length || 0} materials found`);
+      } else {
+        console.log('Material lookup failed, using fallback pricing:', materialResponse.error);
+      }
+    } catch (error) {
+      console.log('Material lookup error, using fallback pricing:', error);
+    }
+
+    // Calculate pricing with material data
+    const priceBreakdown = calculateProjectPrice(caseData.extracted_data, materialLookup);
     const quoteNumber = `VVS-${Date.now().toString().slice(-6)}`;
 
     console.log('Price breakdown calculated:', priceBreakdown);
@@ -109,16 +133,56 @@ serve(async (req) => {
       throw quoteError;
     }
 
-    // Create quote lines
-    const lines = priceBreakdown.breakdown.map((item, index) => ({
-      quote_id: quote.id,
-      line_type: getLineType(item.description),
-      description: item.description,
-      quantity: getQuantity(item.description, priceBreakdown.laborHours),
-      unit_price: getUnitPrice(item.description, item.amount),
-      total_price: item.amount,
-      sort_order: index + 1
-    }));
+    // Create quote lines with detailed materials
+    const lines: any[] = [
+      {
+        quote_id: quote.id,
+        line_type: 'labor',
+        description: `VVS arbejde (${priceBreakdown.laborHours} timer)`,
+        quantity: priceBreakdown.laborHours,
+        unit_price: VALENTIN_PRICING_LOGIC.baseRates.hourlyRate,
+        total_price: priceBreakdown.laborCost,
+        labor_hours: priceBreakdown.laborHours,
+        sort_order: 1,
+      },
+      {
+        quote_id: quote.id,
+        line_type: 'service_vehicle',
+        description: 'Servicebil og værktøj',
+        quantity: 1,
+        unit_price: priceBreakdown.vehicleCost,
+        total_price: priceBreakdown.vehicleCost,
+        sort_order: 2,
+      }
+    ];
+
+    // Add detailed material lines if AI lookup was successful
+    if (materialLookup && materialLookup.materials && materialLookup.materials.length > 0) {
+      materialLookup.materials.forEach((material: any, index: number) => {
+        lines.push({
+          quote_id: quote.id,
+          line_type: 'material',
+          description: material.description,
+          quantity: material.quantity,
+          unit_price: material.unit_price,
+          total_price: material.total_price,
+          material_code: material.product_code,
+          sort_order: 3 + index,
+        });
+      });
+    } else {
+      // Fallback to general material line
+      const analysis = caseData.extracted_data;
+      lines.push({
+        quote_id: quote.id,
+        line_type: 'material',
+        description: `Materialer (${analysis?.project?.estimated_size || 1} ${analysis?.project?.size_unit || 'enheder'})`,
+        quantity: analysis?.project?.estimated_size || 1,
+        unit_price: priceBreakdown.materialCost / (analysis?.project?.estimated_size || 1),
+        total_price: priceBreakdown.materialCost,
+        sort_order: 3,
+      });
+    }
 
     const { error: linesError } = await supabase
       .from('quote_lines')
@@ -160,7 +224,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         error: 'Quote calculation failed', 
-        details: error?.message || 'Unknown error' 
+        details: (error as any)?.message || 'Unknown error' 
       }),
       { 
         status: 500, 
@@ -170,7 +234,7 @@ serve(async (req) => {
   }
 });
 
-function calculateProjectPrice(analysis: any): any {
+function calculateProjectPrice(analysis: any, materialLookup: any = null): any {
   if (!analysis?.project) return createFallbackPrice();
 
   const projectType = analysis.project.type;
@@ -218,14 +282,23 @@ function calculateProjectPrice(analysis: any): any {
 
   // Calculate costs
   const laborCost = hours * VALENTIN_PRICING_LOGIC.baseRates.hourlyRate;
-  const vehicleCost = hours * VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle;
-
-  const unitMaterialCost = VALENTIN_PRICING_LOGIC.materialCostPerType[projectType as keyof typeof VALENTIN_PRICING_LOGIC.materialCostPerType] || 500;
-  let materialCost = unitMaterialCost * size;
-
-  // Apply size discount
-  const discount = getSizeDiscount(size);
-  materialCost *= (1 - discount);
+  const vehicleCost = VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle;
+  
+  // Calculate material costs - use AI lookup if available
+  let materialCost;
+  if (materialLookup && materialLookup.total_cost > 0) {
+    materialCost = materialLookup.total_cost;
+    console.log(`Using AI-selected materials: ${materialCost} DKK`);
+  } else {
+    // Fallback to standard calculation
+    const unitMaterialCost = VALENTIN_PRICING_LOGIC.materialCostPerType[projectType as keyof typeof VALENTIN_PRICING_LOGIC.materialCostPerType] || 500;
+    let baseMaterialCost = unitMaterialCost * size;
+    
+    // Apply size discount
+    const discount = getSizeDiscount(size);
+    materialCost = baseMaterialCost * (1 - discount);
+    console.log(`Using fallback material pricing: ${materialCost} DKK`);
+  }
 
   const subtotal = Math.max(
     laborCost + vehicleCost + materialCost, 
@@ -256,7 +329,7 @@ function calculateProjectPrice(analysis: any): any {
       { 
         description: `Materialer (${size} ${config.unit})`, 
         amount: materialCost, 
-        calculation: `${size} × ${unitMaterialCost} kr${discount > 0 ? ` - ${(discount * 100).toFixed(0)}% rabat` : ''}` 
+        calculation: materialLookup ? 'AI-valgte materialer' : `Estimeret materialepris` 
       }
     ]
   };

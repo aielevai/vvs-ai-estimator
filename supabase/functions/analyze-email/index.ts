@@ -159,7 +159,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         error: 'AI analysis failed', 
-        details: error?.message || 'Unknown error' 
+        details: (error as any)?.message || 'Unknown error' 
       }),
       { 
         status: 500, 
@@ -225,12 +225,12 @@ function enhanceAnalysis(ai: any, email: string) {
   // Calculate pricing hints
   ai.pricing_hints = ai.pricing_hints || {};
   const complexityMultipliers = { simple: 0.8, medium: 1.0, complex: 1.3, emergency: 1.5 };
-  ai.pricing_hints.complexity_multiplier = complexityMultipliers[ai.project.complexity] || 1.0;
+  ai.pricing_hints.complexity_multiplier = (complexityMultipliers as any)[ai.project.complexity] || 1.0;
 
   const projectConfig = getProjectConfig(ai.project.type);
   let hours = (projectConfig.baseHours || 3) * (ai.project.estimated_size || 1);
-  if (projectConfig.additionalPerUnit) {
-    hours += projectConfig.additionalPerUnit * (ai.project.estimated_size || 1);
+  if ((projectConfig as any).additionalPerUnit) {
+    hours += (projectConfig as any).additionalPerUnit * (ai.project.estimated_size || 1);
   }
   hours = Math.round(hours * ai.pricing_hints.complexity_multiplier * 2) / 2;
   

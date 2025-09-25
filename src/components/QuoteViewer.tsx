@@ -112,12 +112,27 @@ export default function QuoteViewer({ quote, onUpdate }: QuoteViewerProps) {
               quote.quote_lines
                 .sort((a, b) => a.sort_order - b.sort_order)
                 .map((line) => (
-                  <div key={line.id} className="flex justify-between items-center py-2 border-b">
+                  <div key={line.id} className="flex justify-between items-start py-3 border-b">
                     <div className="flex-1">
                       <div className="font-medium">{line.description}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {line.quantity} × {formatCurrency(line.unit_price)}
+                      <div className="text-sm text-muted-foreground mt-1">
+                        {line.line_type === 'labor' && line.labor_hours ? 
+                          `${line.labor_hours} timer à ${formatCurrency(line.unit_price)}` :
+                          line.line_type === 'service_vehicle' ?
+                          '1 stk' :
+                          `${line.quantity} × ${formatCurrency(line.unit_price)}`
+                        }
                       </div>
+                      {line.material_code && (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Produktkode: {line.material_code}
+                        </div>
+                      )}
+                      {line.line_type === 'material' && !line.material_code && (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Standard materialepriser - specificeres ved ordrebekræftelse
+                        </div>
+                      )}
                     </div>
                     <div className="text-right font-medium">
                       {formatCurrency(line.total_price)}
