@@ -80,8 +80,34 @@ serve(async (req) => {
       );
     }
 
-    // Calculate pricing (simplified - no external function calls)
-    const priceBreakdown = calculateProjectPrice(caseData.extracted_data);
+    // Get AI-based material pricing
+    let materialData;
+    try {
+      console.log('Calling material-lookup for AI pricing...');
+      const materialResponse = await supabase.functions.invoke('material-lookup', {
+        body: {
+          projectType: caseData.extracted_data?.project?.type || 'service_call',
+          projectDescription: caseData.extracted_data?.project?.description || 'Standard VVS arbejde',
+          estimatedSize: caseData.extracted_data?.project?.estimated_size || 1,
+          complexity: caseData.extracted_data?.project?.complexity || 'medium',
+          materialeAnalyse: caseData.extracted_data?.materiale_analyse
+        }
+      });
+      
+      if (materialResponse.error) {
+        console.error('Material lookup error:', materialResponse.error);
+        materialData = { total_cost: 0, materials: [] };
+      } else {
+        materialData = materialResponse.data;
+        console.log(`AI Material cost: ${materialData.total_cost} DKK`);
+      }
+    } catch (error) {
+      console.error('Failed to get AI material pricing:', error);
+      materialData = { total_cost: 0, materials: [] };
+    }
+
+    // Calculate pricing breakdown with AI materials
+    const priceBreakdown = calculateProjectPrice(caseData.extracted_data, materialData);
     const quoteNumber = `VVS-${Date.now().toString().slice(-6)}`;
 
     console.log('Price breakdown calculated:', priceBreakdown);
@@ -109,7 +135,7 @@ serve(async (req) => {
       throw quoteError;
     }
 
-    // Create quote lines (simplified)
+    // Create quote lines with detailed materials from AI
     const lines = [
       {
         quote_id: quote.id,
@@ -129,17 +155,34 @@ serve(async (req) => {
         unit_price: priceBreakdown.vehicleCost,
         total_price: priceBreakdown.vehicleCost,
         sort_order: 2,
-      },
-      {
+      }
+    ];
+
+    // Add detailed material lines from AI analysis
+    if (materialData?.materials && materialData.materials.length > 0) {
+      materialData.materials.forEach((material: any, index: number) => {
+        lines.push({
+          quote_id: quote.id,
+          line_type: 'material',
+          description: material.description || 'Materiale',
+          quantity: material.quantity || 1,
+          unit_price: material.unit_price || 0,
+          total_price: material.total_price || 0,
+          sort_order: 10 + index,
+        });
+      });
+    } else {
+      // Fallback single material line
+      lines.push({
         quote_id: quote.id,
         line_type: 'material',
         description: `Materialer (${caseData.extracted_data?.project?.estimated_size || 1} ${caseData.extracted_data?.project?.size_unit || 'enheder'})`,
         quantity: caseData.extracted_data?.project?.estimated_size || 1,
         unit_price: priceBreakdown.materialCost / (caseData.extracted_data?.project?.estimated_size || 1),
         total_price: priceBreakdown.materialCost,
-        sort_order: 3,
-      }
-    ];
+        sort_order: 10,
+      });
+    }
 
     const { error: linesError } = await supabase
       .from('quote_lines')
@@ -191,7 +234,7 @@ serve(async (req) => {
   }
 });
 
-function calculateProjectPrice(analysis: any): any {
+function calculateProjectPrice(analysis: any, materialData?: any): any {
   if (!analysis?.project) return createFallbackPrice();
 
   const projectType = analysis.project.type;
@@ -241,13 +284,20 @@ function calculateProjectPrice(analysis: any): any {
   const laborCost = hours * VALENTIN_PRICING_LOGIC.baseRates.hourlyRate;
   const vehicleCost = VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle;
   
-  // Calculate material costs using standard pricing
-  const unitMaterialCost = VALENTIN_PRICING_LOGIC.materialCostPerType[projectType as keyof typeof VALENTIN_PRICING_LOGIC.materialCostPerType] || 500;
-  let baseMaterialCost = unitMaterialCost * size;
-  
-  // Apply size discount
-  const discount = getSizeDiscount(size);
-  const materialCost = baseMaterialCost * (1 - discount);
+  // Use AI-calculated material cost if available, otherwise fallback to config
+  let materialCost;
+  if (materialData?.total_cost && materialData.total_cost > 0) {
+    materialCost = materialData.total_cost;
+    console.log(`Using AI material cost: ${materialCost} DKK`);
+  } else {
+    const unitMaterialCost = VALENTIN_PRICING_LOGIC.materialCostPerType[projectType as keyof typeof VALENTIN_PRICING_LOGIC.materialCostPerType] || 500;
+    let baseMaterialCost = unitMaterialCost * size;
+    
+    // Apply size discount
+    const discount = getSizeDiscount(size);
+    materialCost = baseMaterialCost * (1 - discount);
+    console.log(`Using fallback material cost: ${materialCost} DKK`);
+  }
 
   const subtotal = Math.max(
     laborCost + vehicleCost + materialCost, 
@@ -255,6 +305,12 @@ function calculateProjectPrice(analysis: any): any {
   );
   const vat = subtotal * 0.25;
   const total = subtotal + vat;
+
+  // Quality assurance: Check if pricing seems reasonable
+  const pricePerUnit = total / size;
+  if (pricePerUnit > 10000) {
+    console.warn(`High price per unit detected: ${pricePerUnit} DKK - review may be needed`);
+  }
 
   return {
     laborHours: hours,
@@ -278,7 +334,7 @@ function calculateProjectPrice(analysis: any): any {
       { 
         description: `Materialer (${size} ${config.unit})`, 
         amount: materialCost, 
-        calculation: `Standard materialepris${discount > 0 ? ` - ${(discount * 100).toFixed(0)}% rabat` : ''}` 
+        calculation: materialData?.total_cost ? 'AI-beregnet materialepris' : 'Standard materialepris'
       }
     ]
   };

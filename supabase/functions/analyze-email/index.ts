@@ -6,81 +6,47 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const VALENTIN_AI_PROMPT = `
-Du er VVS-ekspert for Valentin VVS ApS, trænet på 800+ projekter.
-Returnér KUN gyldig JSON (uden kommentarer) med felterne beskrevet nedenfor.
+const VALENTIN_AI_PROMPT = `Du er VVS-ekspert for Valentin VVS ApS og skal analysere kundeforespørgsler for at identificere specifikke materialer og komponenter.
 
-SPECIALER:
-- Standard VVS, Service, Varme (fjern/gulv), m.m.
+Analyser denne email grundigt og returner struktureret JSON med:
 
-STØRRELSER (typisk) - VIGTIGT: Skelne mellem boligstørrelse og projektomfang:
-- Bad: 8-15 m² • Køkken: 4-8 m² • Rør: 5-50 meter • Gulvvarme: 20-150 m²
-- Fjernvarme: ALTID 1 tilslutning pr. bolig (uanset boligstørrelse)
-- Varmepumpe: 1 installation pr. bolig
-- Radiatorer: Antal enheder (typisk 3-8 pr. bolig)
+1. **customer**: Navn, email, telefon, adresse, customer_type (private/business/contractor)
 
-KOMPLEKSITET:
-- simple, medium, complex (gamle anlæg før 1980, kælder/krybekælder), emergency
+2. **project**: 
+   - type: bathroom_renovation, kitchen_plumbing, pipe_installation, district_heating, floor_heating, radiator_installation, service_call
+   - description: Detaljeret beskrivelse af arbejdet
+   - estimated_size: Numerisk værdi (m2, meter, antal, etc.)
+   - size_unit: m2, meter, units, connection, job
+   - complexity: simple, medium, complex, emergency
+   - urgency: normal, urgent, emergency
+   - location_details: Specifik information om stedet
 
-NØGLEORD → STØRRELSE:
-- "lille/small" = 70% af gennemsnit
-- "stor/stort/large" = 140%
-- "hele/komplet" = 150%
+3. **materiale_analyse**: 
+   - specifikke_komponenter: Array af objekter med {komponent: string, mængde: number, enhed: string, specifikationer: string}
+   - tekniske_krav: Array af tekniske specifikationer (diameter, kapacitet, type, etc.)
+   - kvalitetsniveau: basic, standard, premium
+   - særlige_behov: Array af særlige materialer eller komponenter
 
-PROJEKTTYPE MAPPNING - Vælg den MEST specifikke type:
-- Hvis kun fjernvarme nævnes → "district_heating" (1 connection)
-- Hvis kun varmepumpe nævnes → "service_call" (1 job) 
-- Hvis både varmepumpe OG fjernvarme → "district_heating" (1 connection)
-- Bad renovation → "bathroom_renovation" (m2)
-- Køkkenrør → "kitchen_plumbing" (m2)
-- Gulvvarme → "floor_heating" (m2)
-- Rørinstallation → "pipe_installation" (meter)
+4. **pricing_hints**:
+   - base_hours_estimate: Forventet arbejdstimer
+   - complexity_multiplier: 1.0-3.0 
+   - material_complexity: standard, medium, high
 
-UDFALD skal være præcis JSON struktur:
-{
-  "customer": {
-    "name": "Kunde navn",
-    "email": "email@domain.dk",
-    "phone": "12345678",
-    "address": "Adresse",
-    "customer_type": "private"
-  },
-  "project": {
-    "type": "bathroom_renovation",
-    "description": "Beskrivelse af projekt",
-    "estimated_size": 12,
-    "size_unit": "m2",
-    "complexity": "medium",
-    "urgency": "normal",
-    "location_details": "Yderligere placering"
-  },
-  "pricing_hints": {
-    "base_hours_estimate": 96,
-    "complexity_multiplier": 1.0,
-    "material_complexity": "standard"
-  }
-}
+**Eksempel på specifikke_komponenter:**
+[
+  {komponent: "Gulvvarmerør", mængde: 80, enhed: "meter", specifikationer: "16mm PEX-rør"},
+  {komponent: "Radiatorer", mængde: 5, enhed: "stk", specifikationer: "600x800mm, hvid"},
+  {komponent: "Termostatventiler", mængde: 5, enhed: "stk", specifikationer: "Danfoss RA-N"}
+]
 
-PROJECT TYPES (brug kun disse):
-- bathroom_renovation
-- kitchen_plumbing
-- pipe_installation
-- district_heating
-- floor_heating
-- radiator_installation
-- service_call
+**Vigtige regler:**
+- IDENTIFICER ALTID specifikke komponenter når muligt
+- Vær præcis med mængder og specifikationer
+- Brug DANSK terminologi og beskrivelser
+- Vær konservativ med kompleksitet og timer
+- Inkluder tekniske detaljer som diametre, dimensioner, typer
 
-COMPLEXITY (brug kun disse):
-- simple
-- medium
-- complex
-- emergency
-
-URGENCY (brug kun disse):
-- normal
-- urgent
-- emergency
-`;
+Returner KUN valid JSON - ingen anden tekst.`;
 
 serve(async (req) => {
   // Handle CORS preflight requests
