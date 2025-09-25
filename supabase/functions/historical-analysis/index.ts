@@ -50,8 +50,9 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Error in historical-analysis:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
@@ -80,11 +81,11 @@ async function analyzeHistoricalTime(supabase: any, projectType: string, complex
   }
 
   // Calculate statistics
-  const hours = projects.map(p => p.total_hours).sort((a, b) => a - b);
+  const hours = projects.map((p: any) => p.total_hours).sort((a: number, b: number) => a - b);
   const median = calculatePercentile(hours, 0.5);
   const p75 = calculatePercentile(hours, 0.75);
   const p25 = calculatePercentile(hours, 0.25);
-  const mean = hours.reduce((a, b) => a + b, 0) / hours.length;
+  const mean = hours.reduce((a: number, b: number) => a + b, 0) / hours.length;
   const iqr = p75 - p25;
 
   // Calculate complexity adjustment
@@ -139,7 +140,7 @@ async function analyzeMaterialPatterns(supabase: any, projectType: string, estim
   const materialFrequency = new Map();
   const materialQuantities = new Map();
 
-  materials.forEach(item => {
+  materials.forEach((item: any) => {
     const key = item.product_code;
     
     if (!materialFrequency.has(key)) {
@@ -166,7 +167,7 @@ async function analyzeMaterialPatterns(supabase: any, projectType: string, estim
     .sort((a, b) => b.frequency - a.frequency)
     .slice(0, 10)
     .map(material => {
-      const avgQuantity = material.quantities.reduce((a, b) => a + b, 0) / material.quantities.length;
+      const avgQuantity = material.quantities.reduce((a: number, b: number) => a + b, 0) / material.quantities.length;
       const sizeAdjustedQuantity = adjustQuantityForSize(avgQuantity, estimatedSize, projectType);
       
       return {
@@ -182,7 +183,7 @@ async function analyzeMaterialPatterns(supabase: any, projectType: string, estim
 
   return {
     suggestions,
-    total_projects_analyzed: new Set(materials.map(m => m.historical_projects?.id)).size,
+    total_projects_analyzed: new Set(materials.map((m: any) => m.historical_projects?.id)).size,
     confidence: Math.min(0.9, suggestions.length / 8)
   };
 }
@@ -202,9 +203,9 @@ async function calculateRiskFactors(supabase: any, projectType: string, descript
   let historicalVariance = 0.2; // Default 20% variance
   
   if (!error && projects && projects.length > 5) {
-    const hours = projects.map(p => p.total_hours);
-    const mean = hours.reduce((a, b) => a + b, 0) / hours.length;
-    const variance = hours.reduce((sum, hour) => sum + Math.pow(hour - mean, 2), 0) / hours.length;
+    const hours = projects.map((p: any) => p.total_hours);
+    const mean = hours.reduce((a: number, b: number) => a + b, 0) / hours.length;
+    const variance = hours.reduce((sum: number, hour: number) => sum + Math.pow(hour - mean, 2), 0) / hours.length;
     historicalVariance = Math.sqrt(variance) / mean; // Coefficient of variation
   }
 

@@ -31,8 +31,9 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Error in enhanced-data-import:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
     return new Response(
-      JSON.stringify({ error: error.message }), 
+      JSON.stringify({ error: errorMessage }), 
       { 
         status: 500, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
@@ -96,7 +97,7 @@ async function importEnhancedProducts(supabase: any, csvData: string) {
         headers.forEach((header, index) => {
           const dbField = fieldMapping[header];
           if (dbField && values[index] !== undefined) {
-            let value = values[index].trim();
+            let value: any = values[index].trim();
             
             if (dbField === 'gross_price' || dbField === 'net_price') {
               value = parseFloat(value) || 0;
