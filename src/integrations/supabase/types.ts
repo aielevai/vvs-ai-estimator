@@ -66,6 +66,7 @@ export type Database = {
           customer_id: string | null
           description: string | null
           email_content: string | null
+          email_message_id: string | null
           extracted_data: Json | null
           id: string
           postal_code: string | null
@@ -82,6 +83,7 @@ export type Database = {
           customer_id?: string | null
           description?: string | null
           email_content?: string | null
+          email_message_id?: string | null
           extracted_data?: Json | null
           id?: string
           postal_code?: string | null
@@ -98,6 +100,7 @@ export type Database = {
           customer_id?: string | null
           description?: string | null
           email_content?: string | null
+          email_message_id?: string | null
           extracted_data?: Json | null
           id?: string
           postal_code?: string | null
@@ -514,7 +517,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      import_enhanced_supplier_data: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
