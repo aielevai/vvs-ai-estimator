@@ -126,18 +126,11 @@ serve(async (req) => {
           }
         }
 
-        // Check if this email was already processed
+        // Check if this email was already processed using message ID
         const { data: existingCase } = await supabase
           .from('cases')
           .select('id')
-          .eq('email_content', JSON.stringify({
-            id: message.id,
-            subject,
-            from,
-            body,
-            receivedDate,
-            fullPayload: emailData
-          }))
+          .eq('email_message_id', message.id)
           .single();
 
         if (existingCase) {
@@ -151,6 +144,7 @@ serve(async (req) => {
           .insert({
             subject,
             description: body,
+            email_message_id: message.id,
             email_content: JSON.stringify({
               id: message.id,
               subject,

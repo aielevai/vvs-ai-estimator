@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Dashboard from '@/components/Dashboard';
 import TestEmail from '@/components/TestEmail';
 import EnhancedQuoteGenerator from '@/components/EnhancedQuoteGenerator';
+import { DataImporter } from '@/components/DataImporter';
 
 const Index = () => {
   const [refreshKey, setRefreshKey] = useState(0);
@@ -36,6 +37,12 @@ const Index = () => {
                 >
                   AI Tilbud
                 </TabsTrigger>
+                <TabsTrigger 
+                  value="import" 
+                  className="text-white data-[state=active]:bg-white data-[state=active]:text-primary"
+                >
+                  Import Data
+                </TabsTrigger>
             </TabsList>
           </div>
         </div>
@@ -53,6 +60,12 @@ const Index = () => {
         <TabsContent value="enhanced" className="mt-0">
           <div className="vvs-container py-8">
             <EnhancedQuoteGenerator />
+          </div>
+        </TabsContent>
+        
+        <TabsContent value="import" className="mt-0">
+          <div className="vvs-container py-8">
+            <DataImporter />
           </div>
         </TabsContent>
       </Tabs>

@@ -7,100 +7,148 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const supabase = createClient(supabaseUrl, supabaseKey);
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { csvData } = await req.json();
+    console.log('Starting CSV import from public folder...');
+
+    // Import the 65k products from ahlsell-prices.csv
+    const csvResponse = await fetch(`${req.url.split('/functions/')[0]}/ahlsell-prices.csv`);
     
-    if (!csvData) {
-      return new Response(JSON.stringify({ error: 'CSV data required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    if (!csvResponse.ok) {
+      throw new Error('Failed to fetch ahlsell-prices.csv from public folder');
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const csvText = await csvResponse.text();
+    console.log('CSV file loaded, processing...');
 
-    console.log('Starting CSV import...');
+    const lines = csvText.split('\n');
+    const dataLines = lines.slice(1).filter(line => line.trim().length > 0);
+    console.log(`Found ${dataLines.length} products to import into enhanced_supplier_prices`);
 
-    // Parse CSV data (simplified parser)
-    const lines = csvData.split('\n');
-    const headers = lines[0].split(';').map((h: string) => h.replace(/"/g, ''));
-    
-    console.log(`Found ${lines.length - 1} products to import`);
-
-    // Process in batches to avoid memory issues
-    const batchSize = 1000;
+    const batchSize = 500;
     let processedCount = 0;
+    let errorCount = 0;
     
-    for (let i = 1; i < lines.length; i += batchSize) {
-      const batch = [];
-      
-      for (let j = i; j < Math.min(i + batchSize, lines.length); j++) {
-        const line = lines[j];
-        if (!line.trim()) continue;
-        
-        const values = line.split(';').map((v: string) => v.replace(/"/g, ''));
-        
-        if (values.length < 3) continue;
-        
-        const shortDescription = values[0] || '';
-        const longDescription = values[1] || '';
-        const supplierItemId = values[2] || '';
-        const netPriceStr = values[12] || '0';
-        
-        // Parse net price (handle Danish number format)
-        const netPrice = parseFloat(netPriceStr.replace(',', '.')) || 0;
-        
-        if (netPrice <= 0 || !shortDescription) continue;
-        
-        // Map to Valentin categories based on description
-        let valentinMapping = 'service_call'; // default
-        const desc = shortDescription.toLowerCase();
-        
-        if (desc.includes('gulv') || desc.includes('floor')) valentinMapping = 'floor_heating';
-        else if (desc.includes('bad') || desc.includes('toilet') || desc.includes('vask')) valentinMapping = 'bathroom_renovation';
-        else if (desc.includes('køkken') || desc.includes('kitchen')) valentinMapping = 'kitchen_plumbing';
-        else if (desc.includes('fjernvarme') || desc.includes('district')) valentinMapping = 'district_heating';
-        else if (desc.includes('radiator') || desc.includes('varme')) valentinMapping = 'radiator_installation';
-        else if (desc.includes('rør') || desc.includes('pipe')) valentinMapping = 'pipe_installation';
-        
-        batch.push({
-          supplier_id: 'ahlsell',
-          product_code: supplierItemId,
-          description: shortDescription + (longDescription ? ' - ' + longDescription : ''),
-          base_price: netPrice,
-          final_price: netPrice,
-          valentin_mapping: valentinMapping
-        });
-      }
-      
-      if (batch.length > 0) {
-        const { error } = await supabase
-          .from('supplier_prices')
-          .upsert(batch, { onConflict: 'product_code' });
-        
-        if (error) {
-          console.error('Batch import error:', error);
-          throw error;
+    for (let i = 0; i < dataLines.length; i += batchSize) {
+      const batch = dataLines.slice(i, i + batchSize);
+      const records = [];
+
+      for (const line of batch) {
+        try {
+          // Parse CSV line with proper handling of quotes and semicolons
+          const fields = [];
+          let current = '';
+          let inQuotes = false;
+          
+          for (let j = 0; j < line.length; j++) {
+            const char = line[j];
+            if (char === '"') {
+              inQuotes = !inQuotes;
+            } else if (char === ';' && !inQuotes) {
+              fields.push(current.trim());
+              current = '';
+            } else {
+              current += char;
+            }
+          }
+          fields.push(current.trim());
+
+          // Map fields according to CSV structure
+          const [
+            short_description,
+            long_description,
+            supplier_item_id,
+            vvs_number,
+            ean_id,
+            , // customer_item_id - skipped
+            , // tun_id - skipped  
+            , // el_id - skipped
+            , // unspsc - skipped
+            leadtime,
+            is_on_stock,
+            gross_price,
+            net_price,
+            price_quantity,
+            price_unit,
+            , // price_currency - skipped
+            ordering_unit_1,
+            ordering_factor_1,
+            ordering_unit_2,
+            ordering_factor_2,
+            image_url,
+            link
+          ] = fields;
+
+          // Clean and convert data
+          const record: any = {
+            short_description: short_description?.replace(/"/g, '') || null,
+            long_description: long_description?.replace(/"/g, '') || null,
+            supplier_item_id: supplier_item_id || null,
+            vvs_number: vvs_number || null,
+            ean_id: ean_id || null,
+            leadtime: leadtime ? parseInt(leadtime) : null,
+            is_on_stock: is_on_stock === '"true"' || is_on_stock === 'true',
+            gross_price: gross_price ? parseFloat(gross_price.replace(',', '.')) : null,
+            net_price: net_price ? parseFloat(net_price.replace(',', '.')) : null,
+            price_quantity: price_quantity ? parseFloat(price_quantity.replace(',', '.')) : 1,
+            price_unit: price_unit?.replace(/"/g, '') || 'STK',
+            ordering_unit_1: ordering_unit_1?.replace(/"/g, '') || null,
+            ordering_factor_1: ordering_factor_1 ? parseFloat(ordering_factor_1.replace(',', '.')) : null,
+            ordering_unit_2: ordering_unit_2?.replace(/"/g, '') || null,
+            ordering_factor_2: ordering_factor_2 ? parseFloat(ordering_factor_2.replace(',', '.')) : null,
+            image_url: image_url?.replace(/"/g, '') || null,
+            link: link?.replace(/"/g, '') || null
+          };
+
+          // Create normalized_text for search
+          record.normalized_text = [
+            record.short_description,
+            record.long_description,
+            record.vvs_number,
+            record.supplier_item_id
+          ].filter(Boolean).join(' ').toLowerCase();
+
+          records.push(record);
+        } catch (lineError) {
+          console.error('Error parsing line:', lineError);
+          errorCount++;
         }
-        
-        processedCount += batch.length;
-        console.log(`Imported batch: ${processedCount} products processed`);
+      }
+
+      // Insert batch
+      if (records.length > 0) {
+        const { error } = await supabase
+          .from('enhanced_supplier_prices')
+          .insert(records);
+
+        if (error) {
+          console.error('Error inserting batch:', error);
+          errorCount += records.length;
+        } else {
+          processedCount += records.length;
+          if (processedCount % 5000 === 0) {
+            console.log(`Progress: ${processedCount}/${dataLines.length} products imported`);
+          }
+        }
       }
     }
 
-    console.log(`CSV import completed: ${processedCount} products imported`);
+    console.log(`CSV import completed: ${processedCount} imported, ${errorCount} errors`);
 
     return new Response(JSON.stringify({
       success: true,
-      imported_count: processedCount,
-      message: `Successfully imported ${processedCount} products from Ahlsell price file`
+      imported: processedCount,
+      errors: errorCount,
+      total: dataLines.length,
+      message: `Successfully imported ${processedCount} products to enhanced_supplier_prices`
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

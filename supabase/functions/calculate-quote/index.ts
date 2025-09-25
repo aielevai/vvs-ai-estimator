@@ -80,6 +80,29 @@ serve(async (req) => {
       );
     }
 
+    // Get historical analysis for better time estimates
+    let historicalData = null;
+    try {
+      const analysis = caseData.extracted_data;
+      if (analysis?.project) {
+        const historicalResponse = await supabase.functions.invoke('historical-analysis', {
+          body: {
+            projectType: analysis.project.type,
+            complexity: analysis.project.complexity,
+            estimatedSize: analysis.project.estimated_size,
+            description: analysis.project.description
+          }
+        });
+        
+        if (historicalResponse.data) {
+          historicalData = historicalResponse.data;
+          console.log('Got historical analysis for calibration');
+        }
+      }
+    } catch (histError) {
+      console.log('Historical analysis not available, using defaults');
+    }
+
     // Get AI-based material pricing
     let materialData;
     try {
