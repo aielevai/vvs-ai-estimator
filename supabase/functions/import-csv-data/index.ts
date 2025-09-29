@@ -19,8 +19,9 @@ serve(async (req) => {
   try {
     console.log('Starting CSV import from public folder...');
 
-    // Import the 65k products from ahlsell-prices.csv
-    const csvResponse = await fetch(`${req.url.split('/functions/')[0]}/ahlsell-prices.csv`);
+    // Import the 65k products from ahlsell-prices.csv from public folder
+    const csvResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/storage/v1/object/public/temp/ahlsell-prices.csv')
+      .catch(() => fetch(`${req.url.replace(/\/functions\/.*/, '')}/ahlsell-prices.csv`));
     
     if (!csvResponse.ok) {
       throw new Error('Failed to fetch ahlsell-prices.csv from public folder');

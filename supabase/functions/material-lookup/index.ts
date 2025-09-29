@@ -31,15 +31,15 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get relevant products from supplier_prices using intelligent search
+    // Get relevant products from enhanced_supplier_prices using intelligent search
     const searchTerms = getSearchTermsForProject(projectType, materialeAnalyse);
     console.log(`Searching for products with terms: ${searchTerms.join(', ')}`);
     
     const { data: products, error } = await supabase
-      .from('supplier_prices')
+      .from('enhanced_supplier_prices')
       .select('*')
-      .or(searchTerms.map(term => `description.ilike.%${term}%`).join(','))
-      .limit(100);
+      .or(searchTerms.map(term => `normalized_text.ilike.%${term}%,short_description.ilike.%${term}%,long_description.ilike.%${term}%`).join(','))
+      .limit(200);
     
     if (error) {
       console.error('Error fetching products:', error);
@@ -51,7 +51,7 @@ serve(async (req) => {
 
     console.log(`Found ${products?.length || 0} potential products`);
 
-    // Use AI to intelligently select and calculate materials
+    // Use AI to intelligently select and calculate materials with enhanced prompts
     const aiPrompt = createMaterialSelectionPrompt(projectType, projectDescription, estimatedSize, complexity, materialeAnalyse, products || []);
     
     const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -65,20 +65,21 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: 'Du er en ekspert VVS-materialespecialist der vælger de rette produkter og beregner præcise mængder til VVS-projekter.'
+            content: 'Du er en ekspert VVS-materialespecialist med 20+ års erfaring. Du kender Valentin VVS standarder og danske bygningsregler perfekt. Du vælger altid de rigtige produkter og beregner præcise mængder baseret på faktiske projektkrav og danske VVS-standarder.'
           },
           {
             role: 'user',
             content: aiPrompt
           }
         ],
-        max_completion_tokens: 2000
+        max_completion_tokens: 3000
       }),
     });
 
     if (!aiResponse.ok) {
-      console.error('OpenAI API error:', await aiResponse.text());
-      throw new Error('Failed to get AI material analysis');
+      const errorText = await aiResponse.text();
+      console.error('OpenAI API error:', errorText);
+      throw new Error(`OpenAI API failed: ${errorText}`);
     }
 
     const aiData = await aiResponse.json();
@@ -96,7 +97,7 @@ serve(async (req) => {
       console.log('Successfully parsed AI materials:', aiMaterials);
     } catch (parseError) {
       console.error('Failed to parse AI response:', aiData.choices[0].message.content);
-      throw new Error('Invalid AI response format');
+      throw new Error(`Invalid AI response format: ${(parseError as any).message}`);
     }
 
     // Validate and enhance the AI response
@@ -112,7 +113,9 @@ serve(async (req) => {
       project_type: projectType,
       estimated_size: estimatedSize,
       mode: 'ai_optimized',
-      ai_reasoning: aiMaterials.reasoning || 'AI-baseret materialevurdering'
+      ai_reasoning: aiMaterials.reasoning || 'AI-baseret materialevurdering med Valentin VVS standarder',
+      product_count: products?.length || 0,
+      validated_count: validatedMaterials.filter((m: any) => m.validated).length
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -121,31 +124,44 @@ serve(async (req) => {
     console.error('Error in material-lookup function:', error);
     
     // Fallback to simple calculation if AI fails
-    const { projectType, estimatedSize } = await req.json().catch(() => ({ projectType: 'service_call', estimatedSize: 1 }));
-    const fallbackMaterials = createFallbackMaterials(projectType, estimatedSize);
-    const fallbackCost = fallbackMaterials.reduce((sum: number, item: any) => sum + item.total_price, 0);
-    
-    return new Response(JSON.stringify({ 
-      materials: fallbackMaterials,
-      total_cost: fallbackCost,
-      mode: 'fallback',
-      error: `AI error: ${(error as any).message}`
-    }), {
-      status: 200, // Return 200 with fallback instead of error
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    try {
+      const { projectType, estimatedSize } = await req.json().catch(() => ({ projectType: 'service_call', estimatedSize: 1 }));
+      const fallbackMaterials = createFallbackMaterials(projectType, estimatedSize);
+      const fallbackCost = fallbackMaterials.reduce((sum: number, item: any) => sum + item.total_price, 0);
+      
+      return new Response(JSON.stringify({ 
+        materials: fallbackMaterials,
+        total_cost: fallbackCost,
+        mode: 'fallback',
+        error: `AI error: ${(error as any).message}`,
+        fallback_reason: 'AI processing failed, using standard estimates'
+      }), {
+        status: 200, // Return 200 with fallback instead of error
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    } catch (fallbackError) {
+      return new Response(JSON.stringify({ 
+        error: 'Complete failure',
+        materials: [],
+        total_cost: 150,
+        mode: 'emergency_fallback'
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
   }
 });
 
 function getSearchTermsForProject(projectType: string, materialeAnalyse?: any): string[] {
   const baseTerms: Record<string, string[]> = {
-    'bathroom_renovation': ['bad', 'toilet', 'bruser', 'vask', 'gulv', 'varme', 'rør', 'ventil'],
-    'kitchen_plumbing': ['køkken', 'vask', 'opvask', 'rør', 'ventil', 'sifon'],
-    'floor_heating': ['gulvvarme', 'varmerør', 'fordeler', 'termostat', 'isolering'],
-    'radiator_installation': ['radiator', 'varme', 'ventil', 'termostat', 'rør'],
-    'pipe_installation': ['rør', 'fittings', 'ventil', 'kobling'],
-    'district_heating': ['fjernvarme', 'veksler', 'ventil', 'isolering'],
-    'service_call': ['service', 'reparation', 'dele', 'ventil']
+    'bathroom_renovation': ['bad', 'toilet', 'wc', 'bruser', 'vask', 'håndvask', 'gulv', 'varme', 'gulvvarme', 'rør', 'ventil', 'armatur', 'blandingsbatteri', 'afløb', 'sifon', 'membran', 'tætning'],
+    'kitchen_plumbing': ['køkken', 'vask', 'køkkenvask', 'opvask', 'opvaskemaskine', 'rør', 'ventil', 'sifon', 'armatur', 'blandingsbatteri'],
+    'floor_heating': ['gulvvarme', 'varmerør', 'pex', 'fordeler', 'fordelerblok', 'termostat', 'regulering', 'isolering', 'membran'],
+    'radiator_installation': ['radiator', 'varme', 'centralvarme', 'ventil', 'termostat', 'reguleringsventil', 'rør', 'returventil'],
+    'pipe_installation': ['rør', 'vandrør', 'fittings', 'ventil', 'kobling', 'muffe', 'bøjning', 'reduktion'],
+    'district_heating': ['fjernvarme', 'veksler', 'varmeveksler', 'ventil', 'regulering', 'isolering', 'rørisolering'],
+    'service_call': ['service', 'reparation', 'dele', 'ventil', 'pakning', 'tætning', 'reservedel']
   };
 
   let terms = baseTerms[projectType] || ['rør', 'ventil', 'fittings'];
@@ -154,7 +170,8 @@ function getSearchTermsForProject(projectType: string, materialeAnalyse?: any): 
   if (materialeAnalyse?.specifikke_komponenter) {
     materialeAnalyse.specifikke_komponenter.forEach((comp: any) => {
       if (comp.komponent) {
-        terms.push(comp.komponent.toLowerCase());
+        const componentTerms = comp.komponent.toLowerCase().split(/[\s,()/-]+/).filter((term: string) => term.length > 2);
+        terms.push(...componentTerms);
       }
     });
   }
@@ -163,47 +180,101 @@ function getSearchTermsForProject(projectType: string, materialeAnalyse?: any): 
 }
 
 function createMaterialSelectionPrompt(projectType: string, description: string, size: number, complexity: string, materialeAnalyse: any, products: any[]): string {
-  return `Som VVS-ekspert skal du vælge de rigtige materialer til dette projekt:
+  return `Som ekspert VVS-materialespecialist med 20+ års erfaring skal du vælge de rigtige materialer til dette projekt efter Valentin VVS standarder og danske bygningsregler.
 
-PROJEKT:
+PROJEKT DETALJER:
 Type: ${projectType}
 Beskrivelse: ${description}
-Størrelse: ${size}
+Størrelse: ${size} (${getSizeUnit(projectType)})
 Kompleksitet: ${complexity}
 
-MATERIALE ANALYSE:
-${JSON.stringify(materialeAnalyse, null, 2)}
+${materialeAnalyse ? `DETALJERET MATERIALE ANALYSE:
+${JSON.stringify(materialeAnalyse, null, 2)}` : ''}
 
-TILGÆNGELIGE PRODUKTER (${products.length} produkter):
-${products.slice(0, 50).map(p => `- ${p.product_code}: ${p.description} (${p.final_price} DKK)`).join('\n')}
+TILGÆNGELIGE AHLSELL PRODUKTER (${products.length} produkter med faktiske priser):
+${products.slice(0, 100).map(p => 
+  `- ID: ${p.supplier_item_id || 'N/A'} | VVS: ${p.vvs_number || 'N/A'} | ${p.short_description} ${p.long_description ? '- ' + p.long_description : ''} | ${p.net_price} DKK per ${p.price_unit} ${p.is_on_stock ? '(På lager)' : '(Ikke på lager)'}`
+).join('\n')}
 
-OPGAVE:
-Vælg de nødvendige materialer og beregn præcise mængder. Returner JSON med:
+OPGAVE: Vælg de nødvendige materialer og beregn præcise mængder baseret på Valentin VVS erfaring og danske standarder.
 
+RETURNER JSON FORMAT:
 {
   "materials": [
     {
-      "product_code": "eksakt kode fra listen",
-      "description": "produktbeskrivelse",
-      "quantity": antal_baseret_på_projektstørrelse,
+      "supplier_item_id": "eksakt ID fra listen",
+      "vvs_number": "VVS nummer hvis tilgængeligt", 
+      "description": "kort beskrivelse",
+      "quantity": antal_baseret_på_projektstørrelse_og_standarder,
       "unit_price": pris_fra_produktliste,
+      "unit": "enhed fra liste",
       "total_price": quantity * unit_price,
-      "reasoning": "hvorfor dette produkt og denne mængde",
-      "category": "kategori (rør/ventiler/radiatorer/etc)"
+      "reasoning": "detaljeret begrundelse inkl. beregningsgrundlag",
+      "category": "hovedkategori",
+      "priority": "critical/important/optional"
     }
   ],
-  "reasoning": "samlet begrundelse for materialevalgene"
+  "reasoning": "samlet begrundelse for materialevalgene og totale mængder",
+  "quality_notes": "kvalitets- og sikkerhedsovervejelser",
+  "installation_tips": "vigtige installationsanmærkninger"
 }
 
-REGLER:
-1. Brug KUN product_codes fra den givne liste
-2. Beregn realistiske mængder baseret på projektstørrelse
-3. Vælg kvalitetsprodukter til prisen
-4. Inkluder alle nødvendige komponenter (hovedmaterialer + tilbehør)
-5. Maksimer værdi for pengene
-6. Husk sikkerhedsmargin på mængder (10-15%)
+VALENTIN VVS STANDARDER & REGLER:
+1. PRODUKTVALG: Brug KUN supplier_item_id eller vvs_number fra den givne produktliste
+2. MÆNGDEBEREGNING: Følg danske VVS-standarder og bygningsreglement BR18
+3. KVALITET: Prioritér kendte mærker (Danfoss, Grundfos, Uponor, Rehau)
+4. SIKKERHEDSMARGIN: 15-20% på kritiske komponenter, 10% på standard dele
+5. KOMPLETTE SYSTEMER: Inkluder alle nødvendige komponenter + installations-tilbehør
+6. PROJEKTTYPE-SPECIFIKT:
 
-Returner KUN valid JSON.`;
+${getProjectSpecificGuidelines(projectType, size, complexity)}
+
+7. PRISOPTIMERING: Maksimer værdi for pengene - vælg rigtig kvalitet til opgaven
+8. LAGERSTATUS: Prioritér produkter på lager når muligt
+9. KOMPATIBILITET: Sørg for at alle dele passer sammen systemisk
+10. DANSKE STANDARDER: Følg DS-, EN- og BR-standarder for VVS
+
+Returner KUN valid JSON uden ekstra tekst.`;
+}
+
+function getSizeUnit(projectType: string): string {
+  const units: Record<string, string> = {
+    'bathroom_renovation': 'm²',
+    'kitchen_plumbing': 'installationer',
+    'floor_heating': 'm²',
+    'radiator_installation': 'radiatorer',
+    'pipe_installation': 'meter',
+    'district_heating': 'installationer',
+    'service_call': 'opgaver'
+  };
+  return units[projectType] || 'enheder';
+}
+
+function getProjectSpecificGuidelines(projectType: string, size: number, complexity: string): string {
+  const guidelines: Record<string, string> = {
+    'bathroom_renovation': `
+   - Toilet: 1 stk per badeværelse + P-lås eller S-lås efter forhold
+   - Håndvask: Standard 50-60cm bredde + armatur + sifon
+   - Bruser: Standard 90x90cm eller efter plads + termostat + brusesæt
+   - Gulvvarme: 80-100W per m² + fordeler + termostat + PEX 16mm
+   - Afløb: DN110 til toilet, DN50 til bruser/vask + gulvafløb
+   - Vådrumsmembran: Hele gulvareal + 10cm op ad vægge
+   - Vandrør: PEX 15-20mm med isolering + fordelerblok`,
+   
+    'floor_heating': `
+   - PEX-rør: 7-8 meter per m² gulvareal i 16mm dimension  
+   - Fordelerblok: 1 udgange per 10-15m² + individuelle reguleringsventiler
+   - Isolering: Min. 30mm under rør + randisolering
+   - Termostat: 1 per zone + gulvføler + rumføler`,
+   
+    'radiator_installation': `
+   - Radiatorer: Beregn efter rumstørrelse og varmebehov (80-100W/m²)
+   - Tilslutning: 15mm kobbel eller 16mm PEX + ventiler
+   - Regulering: Termostatventil + returventil per radiator
+   - Ekspansion: Ekspansionsbeholder efter anlægsstørrelse`
+  };
+  
+  return guidelines[projectType] || '- Følg generelle VVS-standarder for materialevalg og dimensionering';
 }
 
 function validateAndEnhanceMaterials(aiMaterials: any, products: any[], projectType: string, estimatedSize: number): any[] {
@@ -214,22 +285,33 @@ function validateAndEnhanceMaterials(aiMaterials: any, products: any[], projectT
 
   const validatedMaterials = aiMaterials.materials.map((material: any) => {
     // Find matching product to validate price
-    const matchingProduct = products.find(p => p.product_code === material.product_code);
+    const matchingProduct = products.find(p => 
+      p.supplier_item_id === material.supplier_item_id || 
+      p.vvs_number === material.vvs_number ||
+      p.supplier_item_id === material.product_code // backward compatibility
+    );
     
     if (matchingProduct) {
       return {
         ...material,
-        unit_price: matchingProduct.final_price || matchingProduct.base_price || material.unit_price,
-        total_price: material.quantity * (matchingProduct.final_price || matchingProduct.base_price || material.unit_price),
-        supplier_id: matchingProduct.supplier_id || 'ahlsell',
-        validated: true
+        unit_price: matchingProduct.net_price || matchingProduct.gross_price || material.unit_price,
+        total_price: material.quantity * (matchingProduct.net_price || matchingProduct.gross_price || material.unit_price),
+        supplier_id: 'ahlsell',
+        product_id: matchingProduct.id,
+        ean_id: matchingProduct.ean_id,
+        image_url: matchingProduct.image_url,
+        link: matchingProduct.link,
+        validated: true,
+        in_stock: matchingProduct.is_on_stock,
+        leadtime: matchingProduct.leadtime
       };
     } else {
       // Product not found, use AI suggestion but mark as unvalidated
       return {
         ...material,
         validated: false,
-        supplier_id: 'unknown'
+        supplier_id: 'unknown',
+        warning: 'Produkt ikke fundet i Ahlsell database - pris er estimeret'
       };
     }
   });
@@ -238,9 +320,19 @@ function validateAndEnhanceMaterials(aiMaterials: any, products: any[], projectT
   const totalCost = validatedMaterials.reduce((sum: number, m: any) => sum + (m.total_price || 0), 0);
   const averageCostPerUnit = totalCost / estimatedSize;
   
-  // Sanity check: if cost seems unrealistic, add warning
+  // Sanity checks with warnings
   if (averageCostPerUnit > 5000) {
     console.warn(`High material cost detected: ${averageCostPerUnit} DKK per unit`);
+    validatedMaterials.push({
+      description: '⚠️ QUALITY CHECK: Høj materialeomkostning',
+      reasoning: `Gennemsnit ${Math.round(averageCostPerUnit)} DKK per enhed - verificér mængder`,
+      category: 'quality_check',
+      priority: 'attention'
+    });
+  }
+
+  if (validatedMaterials.filter((m: any) => !m.validated).length > 0) {
+    console.warn('Some materials could not be validated against product database');
   }
 
   return validatedMaterials;
@@ -248,42 +340,74 @@ function validateAndEnhanceMaterials(aiMaterials: any, products: any[], projectT
 
 function createFallbackMaterials(projectType: string, estimatedSize: number): any[] {
   const fallbackMaterials: Record<string, any[]> = {
+    'bathroom_renovation': [
+      {
+        supplier_item_id: 'FALLBACK_TOILET_001',
+        description: 'Standard gulvstående toilet med cisterne',
+        quantity: 1,
+        unit_price: 1200,
+        unit: 'STK',
+        total_price: 1200,
+        reasoning: 'Standard bathroom renovation toilet estimate',
+        category: 'sanitær',
+        priority: 'critical',
+        validated: false
+      },
+      {
+        supplier_item_id: 'FALLBACK_SINK_001', 
+        description: 'Håndvask 60cm med armatur',
+        quantity: 1,
+        unit_price: 800,
+        unit: 'STK',
+        total_price: 800,
+        reasoning: 'Standard sink and faucet combination',
+        category: 'sanitær',
+        priority: 'critical',
+        validated: false
+      }
+    ],
     'floor_heating': [
       {
-        product_code: 'FALLBACK_FH_001',
+        supplier_item_id: 'FALLBACK_FH_001',
         description: 'Gulvvarmerør PEX 16mm',
         quantity: Math.ceil(estimatedSize * 8), // 8m per m²
         unit_price: 12,
+        unit: 'MTR',
         total_price: Math.ceil(estimatedSize * 8) * 12,
-        reasoning: 'Standard gulvvarmerør beregning',
+        reasoning: 'Standard gulvvarmerør beregning: 8m per m²',
         category: 'rør',
-        supplier_id: 'fallback'
+        priority: 'critical',
+        validated: false
       }
     ],
     'radiator_installation': [
       {
-        product_code: 'FALLBACK_RAD_001',
+        supplier_item_id: 'FALLBACK_RAD_001',
         description: 'Standard radiator 600x800mm',
         quantity: Math.max(1, Math.ceil(estimatedSize / 15)), // 1 radiator per 15m²
         unit_price: 800,
+        unit: 'STK',
         total_price: Math.max(1, Math.ceil(estimatedSize / 15)) * 800,
-        reasoning: 'Standard radiator beregning',
-        category: 'radiatorer',
-        supplier_id: 'fallback'
+        reasoning: 'Standard radiator sizing: 1 per 15m²',
+        category: 'radiatorer', 
+        priority: 'critical',
+        validated: false
       }
     ]
   };
 
   return fallbackMaterials[projectType] || [
     {
-      product_code: 'FALLBACK_GEN_001',
+      supplier_item_id: 'FALLBACK_GEN_001',
       description: `Standard materialer til ${projectType.replace('_', ' ')}`,
       quantity: estimatedSize || 1,
       unit_price: 150,
+      unit: 'STK',
       total_price: (estimatedSize || 1) * 150,
-      reasoning: 'Generisk fallback materialepris',
+      reasoning: 'Generisk fallback materialepris baseret på projekttype',
       category: 'diverse',
-      supplier_id: 'fallback'
+      priority: 'important',
+      validated: false
     }
   ];
 }

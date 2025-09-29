@@ -4,6 +4,7 @@ import Dashboard from '@/components/Dashboard';
 import TestEmail from '@/components/TestEmail';
 import EnhancedQuoteGenerator from '@/components/EnhancedQuoteGenerator';
 import { DataImporter } from '@/components/DataImporter';
+import { HistoricalDataManager } from '@/components/HistoricalDataManager';
 
 const Index = () => {
   const [refreshKey, setRefreshKey] = useState(0);
@@ -65,7 +66,10 @@ const Index = () => {
         
         <TabsContent value="import" className="mt-0">
           <div className="vvs-container py-8">
-            <DataImporter />
+            <div className="grid md:grid-cols-2 gap-8 mb-8">
+              <DataImporter />
+              <HistoricalDataManager />
+            </div>
           </div>
         </TabsContent>
       </Tabs>

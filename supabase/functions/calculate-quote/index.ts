@@ -133,7 +133,20 @@ serve(async (req) => {
     const priceBreakdown = calculateProjectPrice(caseData.extracted_data, materialData);
     const quoteNumber = `VVS-${Date.now().toString().slice(-6)}`;
 
-    console.log('Price breakdown calculated:', priceBreakdown);
+    console.log('Price breakdown calculated:', JSON.stringify({
+      laborHours: priceBreakdown.laborHours,
+      laborCost: priceBreakdown.laborCost,
+      vehicleCost: priceBreakdown.vehicleCost,
+      materialCost: priceBreakdown.materialCost,
+      subtotal: priceBreakdown.subtotal,
+      vat: priceBreakdown.vat,
+      total: priceBreakdown.total,
+      breakdown: priceBreakdown.breakdown,
+      materialSource: materialData ? (materialData.mode || 'ai_optimized') : 'standard_estimate',
+      materialValidation: materialData?.validated_count || 0,
+      materialCount: materialData?.materials?.length || 0,
+      historicalCalibration: historicalData ? 'applied' : 'not_available'
+    }, null, 2));
 
     // Create quote
     const { data: quote, error: quoteError } = await supabase
@@ -234,7 +247,12 @@ serve(async (req) => {
           estimated_size: caseData.extracted_data?.project?.estimated_size,
           complexity: caseData.extracted_data?.project?.complexity,
           total_hours: priceBreakdown.laborHours,
-          calculation_details: priceBreakdown.breakdown
+          calculation_details: priceBreakdown.breakdown,
+          material_source: materialData ? (materialData.mode || 'ai_optimized') : 'standard_estimate',
+          material_validation: materialData?.validated_count || 0,
+          material_count: materialData?.materials?.length || 0,
+          ai_reasoning: materialData?.ai_reasoning,
+          historical_calibration: historicalData ? 'applied' : 'not_available'
         }
       }),
       { 
