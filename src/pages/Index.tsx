@@ -3,7 +3,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Dashboard from '@/components/Dashboard';
 import TestEmail from '@/components/TestEmail';
 import EnhancedQuoteGenerator from '@/components/EnhancedQuoteGenerator';
-import { DataImporter } from '@/components/DataImporter';
 import { HistoricalDataManager } from '@/components/HistoricalDataManager';
 
 const Index = () => {
@@ -39,10 +38,10 @@ const Index = () => {
                   AI Tilbud
                 </TabsTrigger>
                 <TabsTrigger 
-                  value="import" 
+                  value="historical" 
                   className="text-white data-[state=active]:bg-white data-[state=active]:text-primary"
                 >
-                  Import Data
+                  Historisk Data
                 </TabsTrigger>
             </TabsList>
           </div>
@@ -64,12 +63,9 @@ const Index = () => {
           </div>
         </TabsContent>
         
-        <TabsContent value="import" className="mt-0">
+        <TabsContent value="historical" className="mt-0">
           <div className="vvs-container py-8">
-            <div className="grid md:grid-cols-2 gap-8 mb-8">
-              <DataImporter />
-              <HistoricalDataManager />
-            </div>
+            <HistoricalDataManager />
           </div>
         </TabsContent>
       </Tabs>
