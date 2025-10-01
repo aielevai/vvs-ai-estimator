@@ -1,19 +1,74 @@
 export const VALENTIN_PRICING_LOGIC = {
   baseRates: {
-    hourlyRate: 550,
-    serviceVehicle: 65,
+    hourlyRate: 595, // Real rate from price list
+    serviceVehicle: 65, // Per hour, not flat fee
     minimumProject: 4500,
   },
 
-  // Timer pr. type (grundtal – kan tunes løbende)
+  // Timer pr. type - baseHours er reference for averageSize
   hoursPerProjectType: {
-    bathroom_renovation: { baseHours: 8, unit: "m2", averageSize: 10, sizeRange: [6, 20] },
-    kitchen_plumbing: { baseHours: 4, unit: "m2", averageSize: 8, sizeRange: [4, 15] },
-    pipe_installation: { baseHours: 0.7, unit: "meter", averageSize: 15, sizeRange: [5, 50] },
-    district_heating: { baseHours: 16, unit: "connection", averageSize: 1, additionalPerUnit: 0.5 },
-    floor_heating: { baseHours: 1.5, unit: "m2", averageSize: 35, sizeRange: [20, 150] },
-    radiator_installation: { baseHours: 4, unit: "units", averageSize: 3, sizeRange: [1, 10] },
-    service_call: { baseHours: 3, unit: "job", averageSize: 1 }
+    bathroom_renovation: { 
+      baseHours: 8, 
+      unit: "m2", 
+      averageSize: 10, 
+      sizeRange: [6, 20],
+      minHours: 4,
+      maxHours: 200,
+      beta: 1.0 // Scaling exponent, can be calibrated by historical data
+    },
+    kitchen_plumbing: { 
+      baseHours: 4, 
+      unit: "m2", 
+      averageSize: 8, 
+      sizeRange: [4, 15],
+      minHours: 3,
+      maxHours: 100,
+      beta: 1.0
+    },
+    pipe_installation: { 
+      baseHours: 0.7, 
+      unit: "meter", 
+      averageSize: 15, 
+      sizeRange: [5, 50],
+      minHours: 2,
+      maxHours: 150,
+      beta: 1.0
+    },
+    district_heating: { 
+      baseHours: 16, 
+      unit: "connection", 
+      averageSize: 1, 
+      additionalPerUnit: 0.5,
+      minHours: 8,
+      maxHours: 40,
+      beta: 1.0
+    },
+    floor_heating: { 
+      baseHours: 1.5, 
+      unit: "m2", 
+      averageSize: 35, 
+      sizeRange: [20, 150],
+      minHours: 4,
+      maxHours: 200,
+      beta: 1.0
+    },
+    radiator_installation: { 
+      baseHours: 4, 
+      unit: "units", 
+      averageSize: 3, 
+      sizeRange: [1, 10],
+      minHours: 2,
+      maxHours: 80,
+      beta: 1.0
+    },
+    service_call: { 
+      baseHours: 3, 
+      unit: "job", 
+      averageSize: 1,
+      minHours: 2,
+      maxHours: 50,
+      beta: 1.0
+    }
   },
 
   // Materialer – interne konstanter (ingen CSV/API endnu)

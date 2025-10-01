@@ -9,18 +9,18 @@ const corsHeaders = {
 
 const VALENTIN_PRICING_LOGIC = {
   baseRates: {
-    hourlyRate: 550,
-    serviceVehicle: 650, // Realistic service car cost
+    hourlyRate: 595,
+    serviceVehicle: 65, // Per hour
     minimumProject: 4500,
   },
   hoursPerProjectType: {
-    bathroom_renovation: { baseHours: 8, unit: "m2", averageSize: 10 },
-    kitchen_plumbing: { baseHours: 4, unit: "m2", averageSize: 8 },
-    pipe_installation: { baseHours: 0.7, unit: "meter", averageSize: 15 },
-    district_heating: { baseHours: 16, unit: "connection", averageSize: 1, additionalPerUnit: 0.5 },
-    floor_heating: { baseHours: 1.5, unit: "m2", averageSize: 35 },
-    radiator_installation: { baseHours: 4, unit: "units", averageSize: 3 },
-    service_call: { baseHours: 3, unit: "job", averageSize: 1 }
+    bathroom_renovation: { baseHours: 8, unit: "m2", averageSize: 10, minHours: 4, maxHours: 200, beta: 1.0 },
+    kitchen_plumbing: { baseHours: 4, unit: "m2", averageSize: 8, minHours: 3, maxHours: 100, beta: 1.0 },
+    pipe_installation: { baseHours: 0.7, unit: "meter", averageSize: 15, minHours: 2, maxHours: 150, beta: 1.0 },
+    district_heating: { baseHours: 16, unit: "connection", averageSize: 1, additionalPerUnit: 0.5, minHours: 8, maxHours: 40, beta: 1.0 },
+    floor_heating: { baseHours: 1.5, unit: "m2", averageSize: 35, minHours: 4, maxHours: 200, beta: 1.0 },
+    radiator_installation: { baseHours: 4, unit: "units", averageSize: 3, minHours: 2, maxHours: 80, beta: 1.0 },
+    service_call: { baseHours: 3, unit: "job", averageSize: 1, minHours: 2, maxHours: 50, beta: 1.0 }
   },
   materialCostPerType: {
     bathroom_renovation: 3500,
@@ -43,6 +43,17 @@ const VALENTIN_PRICING_LOGIC = {
     large: { threshold: 150, discount: 0.2 } 
   }
 };
+
+// Helper to convert text complexity to numeric
+function complexityToNumeric(complexity: string): number {
+  const mapping: Record<string, number> = {
+    simple: 0.8,
+    medium: 1.0,
+    complex: 1.3,
+    emergency: 1.5
+  };
+  return mapping[complexity] || 1.0;
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -85,10 +96,13 @@ serve(async (req) => {
     try {
       const analysis = caseData.extracted_data;
       if (analysis?.project) {
+        const complexityNumeric = complexityToNumeric(analysis.project.complexity);
+        
         const historicalResponse = await supabase.functions.invoke('historical-analysis', {
           body: {
             projectType: analysis.project.type,
-            complexity: analysis.project.complexity,
+            complexity: complexityNumeric,
+            complexityText: analysis.project.complexity,
             estimatedSize: analysis.project.estimated_size,
             description: analysis.project.description
           }
@@ -96,11 +110,11 @@ serve(async (req) => {
         
         if (historicalResponse.data) {
           historicalData = historicalResponse.data;
-          console.log('Got historical analysis for calibration');
+          console.log('Got historical analysis for calibration:', JSON.stringify(historicalData.analysis));
         }
       }
     } catch (histError) {
-      console.log('Historical analysis not available, using defaults');
+      console.log('Historical analysis not available, using defaults:', histError);
     }
 
     // Get AI-based material pricing
@@ -129,8 +143,8 @@ serve(async (req) => {
       materialData = { total_cost: 0, materials: [] };
     }
 
-    // Calculate pricing breakdown with AI materials
-    const priceBreakdown = calculateProjectPrice(caseData.extracted_data, materialData);
+    // Calculate pricing breakdown with AI materials and historical calibration
+    const priceBreakdown = calculateProjectPrice(caseData.extracted_data, materialData, historicalData);
     const quoteNumber = `VVS-${Date.now().toString().slice(-6)}`;
 
     console.log('Price breakdown calculated:', JSON.stringify({
@@ -145,7 +159,8 @@ serve(async (req) => {
       materialSource: materialData ? (materialData.mode || 'ai_optimized') : 'standard_estimate',
       materialValidation: materialData?.validated_count || 0,
       materialCount: materialData?.materials?.length || 0,
-      historicalCalibration: historicalData ? 'applied' : 'not_available'
+      historicalCalibration: historicalData ? 'applied' : 'not_available',
+      calibrationFactors: priceBreakdown.calibrationFactors
     }, null, 2));
 
     // Check for existing quotes to prevent duplicates
@@ -209,9 +224,9 @@ serve(async (req) => {
       {
         quote_id: quote.id,
         line_type: 'service_vehicle',
-        description: 'Servicebil og værktøj',
-        quantity: 1,
-        unit_price: priceBreakdown.vehicleCost,
+        description: `Servicebil og værktøj (${priceBreakdown.laborHours} timer)`,
+        quantity: priceBreakdown.laborHours,
+        unit_price: VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle,
         total_price: priceBreakdown.vehicleCost,
         sort_order: 2,
       }
@@ -271,6 +286,7 @@ serve(async (req) => {
           complexity: caseData.extracted_data?.project?.complexity,
           total_hours: priceBreakdown.laborHours,
           calculation_details: priceBreakdown.breakdown,
+          calibration_factors: priceBreakdown.calibrationFactors,
           material_source: materialData ? (materialData.mode || 'ai_optimized') : 'standard_estimate',
           material_validation: materialData?.validated_count || 0,
           material_count: materialData?.materials?.length || 0,
@@ -299,7 +315,7 @@ serve(async (req) => {
   }
 });
 
-function calculateProjectPrice(analysis: any, materialData?: any): any {
+function calculateProjectPrice(analysis: any, materialData?: any, historicalData?: any): any {
   if (!analysis?.project) return createFallbackPrice();
 
   const projectType = analysis.project.type;
@@ -314,40 +330,46 @@ function calculateProjectPrice(analysis: any, materialData?: any): any {
     return createFallbackPrice();
   }
 
-  // Calculate hours
-  let hours = (config.baseHours || 0) * size;
-  if ((config as any).additionalPerUnit) {
-    hours += (config as any).additionalPerUnit * size;
-  }
+  // Extract calibration parameters from historical data
+  const beta = historicalData?.analysis?.beta || (config as any).beta || 1.0;
+  const H = historicalData?.analysis?.historical_factor || 1.0;
+  const baseHours = config.baseHours || 3;
+  const averageSize = (config as any).averageSize || 1;
+  const additionalPerUnit = (config as any).additionalPerUnit || 0;
+  const minHours = (config as any).minHours || 2;
+  const maxHours = (config as any).maxHours || 100;
 
+  console.log(`Calibration: beta=${beta}, H=${H}, baseHours=${baseHours}, averageSize=${averageSize}`);
+
+  // Calculate hours using reference-based formula
+  // hours_raw = baseHours * (size / averageSize) ^ beta + max(size - 1, 0) * additionalPerUnit
+  const sizeRatio = size / averageSize;
+  const scaledHours = baseHours * Math.pow(sizeRatio, beta);
+  const extraUnits = Math.max(size - 1, 0);
+  const additionalHours = extraUnits * additionalPerUnit;
+  let hours_raw = scaledHours + additionalHours;
+
+  console.log(`Hours calculation: base=${baseHours}, sizeRatio=${sizeRatio.toFixed(2)}, beta=${beta}, scaled=${scaledHours.toFixed(2)}, additional=${additionalHours.toFixed(2)}, raw=${hours_raw.toFixed(2)}`);
+
+  // Apply complexity multiplier
   const complexityMultiplier = VALENTIN_PRICING_LOGIC.complexityMultipliers[complexity as keyof typeof VALENTIN_PRICING_LOGIC.complexityMultipliers] || 1.0;
-  hours = Math.round(hours * complexityMultiplier * 2) / 2;
+  let hours_adjusted = hours_raw * complexityMultiplier * H;
 
-  // Sanity check: Cap unrealistic hour estimates
-  const maxHoursPerType = {
-    bathroom_renovation: 200,
-    kitchen_plumbing: 100,
-    pipe_installation: 150,
-    district_heating: 40,
-    floor_heating: 200,
-    radiator_installation: 80,
-    service_call: 50
-  };
+  console.log(`After complexity (${complexityMultiplier}) and historical factor (${H}): ${hours_adjusted.toFixed(2)}`);
+
+  // Clamp to min/max bounds
+  hours_adjusted = Math.max(minHours, Math.min(hours_adjusted, maxHours));
   
-  const maxHours = maxHoursPerType[projectType as keyof typeof maxHoursPerType] || 100;
-  if (hours > maxHours) {
-    console.log(`WARNING: Capping unrealistic hours estimate from ${hours} to ${maxHours} for project type ${projectType}`);
-    hours = maxHours;
-  }
-  
-  if (hours < 1) {
-    console.log(`WARNING: Hours too low (${hours}), setting minimum to 2 hours`);
-    hours = 2;
-  }
+  // Round to nearest half hour (deferred to end)
+  const hours = Math.round(hours_adjusted * 2) / 2;
+
+  console.log(`Final hours after clamp and round: ${hours}`);
 
   // Calculate costs
   const laborCost = hours * VALENTIN_PRICING_LOGIC.baseRates.hourlyRate;
-  const vehicleCost = VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle;
+  
+  // Vehicle cost proportional to hours
+  const vehicleCost = hours * VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle;
   
   // Use AI-calculated material cost if available, otherwise fallback to config
   let materialCost;
@@ -364,37 +386,42 @@ function calculateProjectPrice(analysis: any, materialData?: any): any {
     console.log(`Using fallback material cost: ${materialCost} DKK`);
   }
 
-  const subtotal = Math.max(
-    laborCost + vehicleCost + materialCost, 
-    VALENTIN_PRICING_LOGIC.baseRates.minimumProject
-  );
+  // Apply minimum only to labor cost (not materials)
+  const minimumLaborCost = VALENTIN_PRICING_LOGIC.baseRates.minimumProject / 2; // Half of project minimum
+  const adjustedLaborCost = Math.max(laborCost, minimumLaborCost);
+  const minimumApplied = adjustedLaborCost > laborCost;
+  
+  const subtotal = adjustedLaborCost + vehicleCost + materialCost;
   const vat = subtotal * 0.25;
   const total = subtotal + vat;
 
-  // Quality assurance: Check if pricing seems reasonable
-  const pricePerUnit = total / size;
-  if (pricePerUnit > 10000) {
-    console.warn(`High price per unit detected: ${pricePerUnit} DKK - review may be needed`);
-  }
-
   return {
     laborHours: hours,
-    laborCost,
+    laborCost: adjustedLaborCost,
     vehicleCost,
     materialCost,
     subtotal,
     vat,
     total,
+    calibrationFactors: {
+      beta,
+      historicalFactor: H,
+      complexityMultiplier,
+      referenceSize: averageSize,
+      actualSize: size,
+      minimumApplied,
+      vehicleCostType: 'hourly'
+    },
     breakdown: [
       { 
         description: `${projectType.replace('_', ' ')} arbejde (${hours.toFixed(1)} timer)`, 
-        amount: laborCost, 
-        calculation: `${hours.toFixed(1)} × ${VALENTIN_PRICING_LOGIC.baseRates.hourlyRate} kr` 
+        amount: adjustedLaborCost, 
+        calculation: `${hours.toFixed(1)} × ${VALENTIN_PRICING_LOGIC.baseRates.hourlyRate} kr${minimumApplied ? ' (minimum anvendt)' : ''}` 
       },
       { 
-        description: `Servicevogn`, 
+        description: `Servicevogn (${hours.toFixed(1)} timer)`, 
         amount: vehicleCost, 
-        calculation: `Standard pris` 
+        calculation: `${hours.toFixed(1)} × ${VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle} kr/time` 
       },
       { 
         description: `Materialer (${size} ${config.unit})`, 
@@ -408,9 +435,9 @@ function calculateProjectPrice(analysis: any, materialData?: any): any {
 function createFallbackPrice() {
   const hours = 4;
   const laborCost = hours * VALENTIN_PRICING_LOGIC.baseRates.hourlyRate;
-  const vehicleCost = VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle;
+  const vehicleCost = hours * VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle;
   const materialCost = 2000;
-  const subtotal = Math.max(laborCost + vehicleCost + materialCost, VALENTIN_PRICING_LOGIC.baseRates.minimumProject);
+  const subtotal = laborCost + vehicleCost + materialCost;
   const vat = subtotal * 0.25;
 
   return {
@@ -421,9 +448,18 @@ function createFallbackPrice() {
     subtotal,
     vat,
     total: subtotal + vat,
+    calibrationFactors: {
+      beta: 1.0,
+      historicalFactor: 1.0,
+      complexityMultiplier: 1.0,
+      referenceSize: 1,
+      actualSize: 1,
+      minimumApplied: false,
+      vehicleCostType: 'hourly'
+    },
     breakdown: [
       { description: `Standard VVS arbejde (${hours} timer)`, amount: laborCost, calculation: `${hours} × ${VALENTIN_PRICING_LOGIC.baseRates.hourlyRate} kr` },
-      { description: `Servicevogn`, amount: vehicleCost, calculation: `Standard pris` },
+      { description: `Servicevogn (${hours} timer)`, amount: vehicleCost, calculation: `${hours} × ${VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle} kr/time` },
       { description: `Standard materialer`, amount: materialCost, calculation: `Estimat` }
     ]
   };

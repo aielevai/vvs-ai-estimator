@@ -188,36 +188,17 @@ function enhanceAnalysis(ai: any, email: string) {
     ai.project.urgency = 'emergency';
   }
 
-  // Calculate pricing hints
+  // Calculate pricing hints - simplified, actual calculation happens in calculate-quote
   ai.pricing_hints = ai.pricing_hints || {};
   const complexityMultipliers = { simple: 0.8, medium: 1.0, complex: 1.3, emergency: 1.5 };
   ai.pricing_hints.complexity_multiplier = (complexityMultipliers as any)[ai.project.complexity] || 1.0;
 
+  // Store basic estimate for UI display, but don't do full calculation here
+  // The actual calculation with historical calibration happens in calculate-quote
   const projectConfig = getProjectConfig(ai.project.type);
-  let hours = (projectConfig.baseHours || 3) * (ai.project.estimated_size || 1);
-  if ((projectConfig as any).additionalPerUnit) {
-    hours += (projectConfig as any).additionalPerUnit * (ai.project.estimated_size || 1);
-  }
-  hours = Math.round(hours * ai.pricing_hints.complexity_multiplier * 2) / 2;
+  const estimatedHours = projectConfig.baseHours * (ai.project.estimated_size || 1) / (projectConfig.averageSize || 1);
   
-  // Sanity check: Cap unrealistic hour estimates
-  const maxHoursPerType = {
-    bathroom_renovation: 200,
-    kitchen_plumbing: 100,
-    pipe_installation: 150,
-    district_heating: 40,
-    floor_heating: 200,
-    radiator_installation: 80,
-    service_call: 50
-  };
-  
-  const maxHours = maxHoursPerType[ai.project.type as keyof typeof maxHoursPerType] || 100;
-  if (hours > maxHours) {
-    console.log(`WARNING: Capping unrealistic hours estimate from ${hours} to ${maxHours} for project type ${ai.project.type}`);
-    hours = maxHours;
-  }
-  
-  ai.pricing_hints.base_hours_estimate = hours;
+  ai.pricing_hints.base_hours_estimate = Math.round(estimatedHours * ai.pricing_hints.complexity_multiplier * 2) / 2;
   ai.pricing_hints.material_complexity = ai.project.complexity === 'complex' ? 'high' : 'standard';
 
   return ai;

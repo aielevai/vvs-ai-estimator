@@ -7,6 +7,20 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Helper to convert text complexity to numeric if needed
+function ensureNumericComplexity(complexity: any): number {
+  if (typeof complexity === 'number') return complexity;
+  
+  const mapping: Record<string, number> = {
+    simple: 0.8,
+    medium: 1.0,
+    complex: 1.3,
+    emergency: 1.5
+  };
+  
+  return mapping[String(complexity).toLowerCase()] || 1.0;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -15,14 +29,17 @@ serve(async (req) => {
   try {
     const { projectType, complexity, description, estimatedSize } = await req.json();
     
+    // Convert complexity to numeric
+    const complexityNumeric = ensureNumericComplexity(complexity);
+    
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log(`Historical analysis for: ${projectType} (complexity: ${complexity})`);
+    console.log(`Historical analysis for: ${projectType} (complexity: ${complexityNumeric})`);
 
-    // 1. Get historical time patterns
-    const timeAnalysis = await analyzeHistoricalTime(supabase, projectType, complexity);
+    // 1. Get historical time patterns and calculate beta
+    const timeAnalysis = await analyzeHistoricalTime(supabase, projectType, complexityNumeric, estimatedSize);
     
     // 2. Get material patterns (BOM suggestions)
     const materialPatterns = await analyzeMaterialPatterns(supabase, projectType, estimatedSize);
@@ -42,7 +59,10 @@ serve(async (req) => {
           material_patterns: materialPatterns,
           risk_factors: riskAnalysis,
           insights: insights,
-          confidence: calculateConfidence(timeAnalysis, materialPatterns)
+          confidence: calculateConfidence(timeAnalysis, materialPatterns),
+          // Calibration parameters for calculate-quote
+          beta: timeAnalysis.beta || 1.0,
+          historical_factor: timeAnalysis.historical_factor || 1.0
         }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -58,17 +78,17 @@ serve(async (req) => {
   }
 });
 
-async function analyzeHistoricalTime(supabase: any, projectType: string, complexity: number) {
+async function analyzeHistoricalTime(supabase: any, projectType: string, complexity: number, estimatedSize: number) {
   console.log('Analyzing historical time patterns...');
   
-  // Get historical projects of the same type
+  // Get historical projects of the same type with size info
   const { data: projects, error } = await supabase
     .from('historical_projects')
-    .select('total_hours, complexity_signals, total_project_cost, total_materials_cost')
+    .select('total_hours, complexity_signals, total_project_cost, total_materials_cost, project_description')
     .eq('project_type', projectType)
     .not('total_hours', 'is', null)
     .gte('total_hours', 0.5)
-    .lte('total_hours', 100); // Reasonable bounds
+    .lte('total_hours', 500); // Reasonable bounds
 
   if (error) {
     console.error('Historical time query error:', error);
@@ -80,6 +100,46 @@ async function analyzeHistoricalTime(supabase: any, projectType: string, complex
     return getDefaultTimeEstimate(projectType);
   }
 
+  // Try to extract sizes from descriptions and calculate beta
+  let beta = 1.0;
+  const projectsWithSize: Array<{hours: number, size: number}> = [];
+  
+  projects.forEach((p: any) => {
+    const desc = (p.project_description || '').toLowerCase();
+    const sizeMatch = desc.match(/(\d+(?:[\.,]\d+)?)\s*(m2|m²|meter|metre|kvadratmeter|stk|enheder)/i);
+    if (sizeMatch) {
+      const size = parseFloat(sizeMatch[1].replace(',', '.'));
+      if (size > 0 && p.total_hours > 0) {
+        projectsWithSize.push({ hours: p.total_hours, size });
+      }
+    }
+  });
+
+  // Calculate beta using log-log regression if we have enough data
+  if (projectsWithSize.length >= 5) {
+    console.log(`Calculating beta from ${projectsWithSize.length} projects with size data`);
+    
+    // Log-log regression: log(hours) = log(a) + beta * log(size)
+    const logHours = projectsWithSize.map(p => Math.log(p.hours));
+    const logSizes = projectsWithSize.map(p => Math.log(p.size));
+    
+    const n = projectsWithSize.length;
+    const sumLogSize = logSizes.reduce((a, b) => a + b, 0);
+    const sumLogHours = logHours.reduce((a, b) => a + b, 0);
+    const sumLogSizeLogHours = logSizes.reduce((sum, logSize, i) => sum + logSize * logHours[i], 0);
+    const sumLogSizeSquared = logSizes.reduce((sum, logSize) => sum + logSize * logSize, 0);
+    
+    const numerator = n * sumLogSizeLogHours - sumLogSize * sumLogHours;
+    const denominator = n * sumLogSizeSquared - sumLogSize * sumLogSize;
+    
+    if (denominator !== 0) {
+      beta = numerator / denominator;
+      // Clamp beta to reasonable range [0.5, 1.5]
+      beta = Math.max(0.5, Math.min(1.5, beta));
+      console.log(`Calculated beta: ${beta.toFixed(3)}`);
+    }
+  }
+
   // Calculate statistics
   const hours = projects.map((p: any) => p.total_hours).sort((a: number, b: number) => a - b);
   const median = calculatePercentile(hours, 0.5);
@@ -88,15 +148,47 @@ async function analyzeHistoricalTime(supabase: any, projectType: string, complex
   const mean = hours.reduce((a: number, b: number) => a + b, 0) / hours.length;
   const iqr = p75 - p25;
 
-  // Calculate complexity adjustment
-  const complexityMultiplier = 1 + (complexity / 5) * 0.8; // 0-80% increase based on complexity
-  const alpha = 0.8; // How much to weight P75 vs median
+  // Calculate historical factor H
+  // H adjusts the estimate based on how this project compares to typical projects
+  // Default H = 1.0, can range from 0.7 to 1.3
+  let H = 1.0;
   
-  const baseEstimate = median + alpha * (p75 - median) * (complexity / 5);
+  // If estimatedSize is available, adjust H based on typical size-to-hours relationship
+  if (estimatedSize && projectsWithSize.length >= 3) {
+    const typicalHoursPerUnit = mean / (projectsWithSize.reduce((sum, p) => sum + p.size, 0) / projectsWithSize.length);
+    const variance = projectsWithSize.reduce((sum, p) => {
+      const predicted = typicalHoursPerUnit * p.size;
+      return sum + Math.pow(p.hours - predicted, 2);
+    }, 0) / projectsWithSize.length;
+    
+    const cv = Math.sqrt(variance) / mean; // Coefficient of variation
+    
+    // If high variance, be more conservative (H > 1.0)
+    if (cv > 0.5) {
+      H = 1.1;
+    } else if (cv > 0.3) {
+      H = 1.05;
+    }
+    
+    // If complexity is high, increase H
+    if (complexity > 1.2) {
+      H *= 1.1;
+    }
+    
+    H = Math.max(0.7, Math.min(1.3, H));
+  }
+
+  console.log(`Historical factor H: ${H.toFixed(3)}`);
+
+  // Calculate complexity adjustment for display purposes
+  const complexityMultiplier = 1 + (complexity - 1.0) * 0.5;
+  const alpha = 0.8;
+  
+  const baseEstimate = median + alpha * (p75 - median) * (complexity - 1.0);
   const finalEstimate = baseEstimate * complexityMultiplier;
   
   // Calculate risk buffer
-  const riskHours = 0.2 * iqr; // 20% of IQR as risk buffer
+  const riskHours = 0.2 * iqr;
 
   return {
     median,
@@ -109,7 +201,10 @@ async function analyzeHistoricalTime(supabase: any, projectType: string, complex
     final_estimate: finalEstimate,
     risk_hours: riskHours,
     complexity_multiplier: complexityMultiplier,
-    confidence: Math.min(0.95, projects.length / 20) // Higher confidence with more data
+    confidence: Math.min(0.95, projects.length / 20),
+    beta,
+    historical_factor: H,
+    projects_with_size: projectsWithSize.length
   };
 }
 
@@ -138,7 +233,6 @@ async function analyzeMaterialPatterns(supabase: any, projectType: string, estim
 
   // Aggregate material frequency and patterns
   const materialFrequency = new Map();
-  const materialQuantities = new Map();
 
   materials.forEach((item: any) => {
     const key = item.product_code;
@@ -243,22 +337,23 @@ async function calculateRiskFactors(supabase: any, projectType: string, descript
 
 function getDefaultTimeEstimate(projectType: string) {
   const defaults: Record<string, any> = {
-    'radiator_installation': { median: 3, p75: 5, risk_hours: 1 },
-    'floor_heating': { median: 8, p75: 12, risk_hours: 2 },
-    'bathroom_renovation': { median: 12, p75: 18, risk_hours: 3 },
-    'district_heating': { median: 6, p75: 9, risk_hours: 1.5 },
-    'service_call': { median: 2, p75: 3, risk_hours: 0.5 },
-    'kitchen_plumbing': { median: 4, p75: 6, risk_hours: 1 },
-    'pipe_installation': { median: 5, p75: 8, risk_hours: 1.5 }
+    'radiator_installation': { median: 3, p75: 5, risk_hours: 1, beta: 1.0, historical_factor: 1.0 },
+    'floor_heating': { median: 8, p75: 12, risk_hours: 2, beta: 0.9, historical_factor: 1.0 },
+    'bathroom_renovation': { median: 12, p75: 18, risk_hours: 3, beta: 0.95, historical_factor: 1.0 },
+    'district_heating': { median: 6, p75: 9, risk_hours: 1.5, beta: 1.0, historical_factor: 1.0 },
+    'service_call': { median: 2, p75: 3, risk_hours: 0.5, beta: 1.0, historical_factor: 1.0 },
+    'kitchen_plumbing': { median: 4, p75: 6, risk_hours: 1, beta: 1.0, historical_factor: 1.0 },
+    'pipe_installation': { median: 5, p75: 8, risk_hours: 1.5, beta: 0.85, historical_factor: 1.0 }
   };
   
-  const defaultValues = defaults[projectType] || { median: 4, p75: 6, risk_hours: 1 };
+  const defaultValues = defaults[projectType] || { median: 4, p75: 6, risk_hours: 1, beta: 1.0, historical_factor: 1.0 };
   
   return {
     ...defaultValues,
     sample_size: 0,
     final_estimate: defaultValues.median,
-    confidence: 0.3
+    confidence: 0.3,
+    projects_with_size: 0
   };
 }
 
@@ -319,6 +414,11 @@ function generateInsights(timeAnalysis: any, materialPatterns: any, riskAnalysis
   
   if (timeAnalysis.sample_size > 10) {
     insights.push(`Baseret på ${timeAnalysis.sample_size} historiske projekter af samme type`);
+  }
+  
+  if (timeAnalysis.beta !== 1.0) {
+    const scaling = timeAnalysis.beta < 1.0 ? 'sublineær' : 'superlineær';
+    insights.push(`Historisk data viser ${scaling} skalering (β=${timeAnalysis.beta.toFixed(2)})`);
   }
   
   if (riskAnalysis.risk_score > 0.3) {
