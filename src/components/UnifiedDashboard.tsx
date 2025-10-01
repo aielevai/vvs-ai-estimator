@@ -102,17 +102,43 @@ export default function UnifiedDashboard() {
     }
 
     try {
-      // Delete quotes first (foreign key constraint)
-      await supabase
+      setLoading(true);
+
+      // First get all quotes for this case
+      const { data: quotes, error: fetchError } = await supabase
         .from('quotes')
-        .delete()
+        .select('id')
         .eq('case_id', caseId);
 
-      // Delete case
-      await supabase
+      if (fetchError) throw fetchError;
+
+      // Delete quote_lines first (foreign key constraint)
+      if (quotes && quotes.length > 0) {
+        for (const quote of quotes) {
+          const { error: linesError } = await supabase
+            .from('quote_lines')
+            .delete()
+            .eq('quote_id', quote.id);
+
+          if (linesError) throw linesError;
+        }
+
+        // Then delete quotes
+        const { error: quotesError } = await supabase
+          .from('quotes')
+          .delete()
+          .eq('case_id', caseId);
+
+        if (quotesError) throw quotesError;
+      }
+
+      // Finally delete the case
+      const { error: caseError } = await supabase
         .from('cases')
         .delete()
         .eq('id', caseId);
+
+      if (caseError) throw caseError;
 
       toast({
         title: "✅ Sag Slettet",
@@ -127,6 +153,8 @@ export default function UnifiedDashboard() {
         description: "Kunne ikke slette sagen",
         variant: "destructive"
       });
+    } finally {
+      setLoading(false);
     }
   };
 

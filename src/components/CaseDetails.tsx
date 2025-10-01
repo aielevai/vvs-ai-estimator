@@ -24,6 +24,7 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
   const { toast } = useToast();
   
   const hasDraftQuote = caseData.quotes?.some(q => q.status === 'draft');
+  const draftQuote = caseData.quotes?.find(q => q.status === 'draft');
 
   const handleAnalyze = async () => {
     setAnalyzing(true);
@@ -223,9 +224,10 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
         )}
 
         {/* Smart Quote Wizard */}
-        {showWizard && !hasQuote && (
+        {showWizard && (
           <SmartQuoteWizard
             caseData={caseData}
+            existingQuote={draftQuote}
             onComplete={() => {
               setShowWizard(false);
               onUpdate();
