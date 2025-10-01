@@ -19,6 +19,35 @@ export interface ParsedProduct {
   normalized_text: string;
 }
 
+// Fix encoding issues - convert common garbled Danish characters
+const fixEncoding = (text: string): string => {
+  const encodingMap: Record<string, string> = {
+    'Ã¦': 'æ',
+    'Ã˜': 'Ø',
+    'Ã¸': 'ø',
+    'Ã…': 'Å',
+    'Ã¥': 'å',
+    'Ã†': 'Æ',
+    'Ã': 'Å', // Alternative encoding
+    'Â°': '°',
+    'Â½': '½',
+    'Â¼': '¼',
+    'Â¾': '¾',
+    'â€"': '–',
+    'â€œ': '"',
+    'â€': '"',
+    'â€™': "'",
+    'â€˜': "'",
+    '�': '', // Remove replacement characters
+  };
+
+  let fixed = text;
+  for (const [garbled, correct] of Object.entries(encodingMap)) {
+    fixed = fixed.replace(new RegExp(garbled, 'g'), correct);
+  }
+  return fixed;
+};
+
 export const fetchAndParseCSV = async (): Promise<ParsedProduct[]> => {
   console.log('Fetching CSV from /ahlsell-prices.csv...');
   
@@ -27,7 +56,11 @@ export const fetchAndParseCSV = async (): Promise<ParsedProduct[]> => {
     throw new Error('Failed to fetch CSV file');
   }
 
-  const csvText = await response.text();
+  let csvText = await response.text();
+  
+  // Fix encoding issues
+  csvText = fixEncoding(csvText);
+  
   console.log('CSV loaded, parsing...');
 
   const lines = csvText.split('\n');

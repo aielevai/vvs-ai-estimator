@@ -7,6 +7,35 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Fix encoding issues - convert common garbled Danish characters
+const fixEncoding = (text: string): string => {
+  const encodingMap: Record<string, string> = {
+    'Ã¦': 'æ',
+    'Ã˜': 'Ø',
+    'Ã¸': 'ø',
+    'Ã…': 'Å',
+    'Ã¥': 'å',
+    'Ã†': 'Æ',
+    'Ã': 'Å',
+    'Â°': '°',
+    'Â½': '½',
+    'Â¼': '¼',
+    'Â¾': '¾',
+    'â€"': '–',
+    'â€œ': '"',
+    'â€': '"',
+    'â€™': "'",
+    'â€˜': "'",
+    '�': '',
+  };
+
+  let fixed = text;
+  for (const [garbled, correct] of Object.entries(encodingMap)) {
+    fixed = fixed.replace(new RegExp(garbled, 'g'), correct);
+  }
+  return fixed;
+};
+
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -25,10 +54,20 @@ serve(async (req) => {
 
     console.log(`Processing chunk ${chunkIndex}/${totalChunks} with ${products.length} products`);
 
+    // Fix encoding in all text fields
+    const cleanProducts = products.map((product: any) => ({
+      ...product,
+      short_description: product.short_description ? fixEncoding(product.short_description) : null,
+      long_description: product.long_description ? fixEncoding(product.long_description) : null,
+      normalized_text: product.normalized_text ? fixEncoding(product.normalized_text) : null,
+      supplier_item_id: product.supplier_item_id ? fixEncoding(product.supplier_item_id) : null,
+      vvs_number: product.vvs_number ? fixEncoding(product.vvs_number) : null,
+    }));
+
     // Insert the products batch
     const { error } = await supabase
       .from('enhanced_supplier_prices')
-      .insert(products);
+      .insert(cleanProducts);
 
     if (error) {
       console.error('Error inserting products:', error);
