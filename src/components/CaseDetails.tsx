@@ -20,9 +20,10 @@ interface CaseDetailsProps {
 export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDetailsProps) {
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
-  const [calculating, setCalculating] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const { toast } = useToast();
+  
+  const hasDraftQuote = caseData.quotes?.some(q => q.status === 'draft');
 
   const handleAnalyze = async () => {
     setAnalyzing(true);
@@ -69,43 +70,6 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
     }
   };
 
-  const handleGenerateQuote = async () => {
-    setCalculating(true);
-    try {
-      const response = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/calculate-quote', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
-        },
-        body: JSON.stringify({
-          caseId: caseData.id
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Quote calculation failed');
-      }
-
-      const result = await response.json();
-
-      toast({
-        title: "Tilbud Genereret",
-        description: `Tilbud ${result.quote.quote_number} er klar`
-      });
-
-      onUpdate();
-    } catch (error) {
-      console.error('Quote calculation failed:', error);
-      toast({
-        title: "Fejl",
-        description: "Tilbudsgenerering fejlede",
-        variant: "destructive"
-      });
-    } finally {
-      setCalculating(false);
-    }
-  };
 
   const hasQuote = caseData.quotes && caseData.quotes.length > 0;
 
@@ -179,7 +143,17 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
                 </Button>
               )}
 
-              {hasQuote && (
+              {hasDraftQuote && !showWizard && (
+                <Button 
+                  onClick={() => setShowWizard(true)} 
+                  variant="outline"
+                >
+                  <Calculator className="h-4 w-4 mr-2" />
+                  Rediger Draft
+                </Button>
+              )}
+
+              {hasQuote && !hasDraftQuote && (
                 <div className="flex items-center gap-2 text-green-600">
                   <CheckCircle className="h-4 w-4" />
                   <span className="text-sm font-medium">Tilbud genereret</span>

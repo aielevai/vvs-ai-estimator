@@ -13,7 +13,8 @@ import {
   Calculator,
   CheckCircle,
   Clock,
-  AlertCircle
+  AlertCircle,
+  Trash2
 } from "lucide-react";
 import CaseDetails from "./CaseDetails";
 import { supabase } from "@/integrations/supabase/client";
@@ -50,26 +51,13 @@ export default function UnifiedDashboard() {
     setSelectedCase(fullCase);
   };
 
-  const handleProcessCase = async (caseItem: Case) => {
-    // Check for existing quotes to prevent duplicates
-    const { data: existingQuotes } = await supabase
-      .from('quotes')
-      .select('id')
-      .eq('case_id', caseItem.id)
-      .in('status', ['draft', 'sent']);
-
-    if (existingQuotes && existingQuotes.length > 0) {
-      toast({
-        title: "Tilbud eksisterer allerede",
-        description: "Der er allerede et aktivt tilbud for denne sag",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    // Auto-process: Analyze -> Generate Quote
+  const handleAnalyzeCase = async (caseItem: Case) => {
     try {
-      // Step 1: Analyze
+      toast({
+        title: "Analyserer...",
+        description: "AI analyserer sagen"
+      });
+
       const analyzeResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/analyze-email', {
         method: 'POST',
         headers: {
@@ -90,29 +78,53 @@ export default function UnifiedDashboard() {
         status: 'analyzed'
       });
 
-      // Step 2: Generate Quote
-      const quoteResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/calculate-quote', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
-        },
-        body: JSON.stringify({ caseId: caseItem.id })
-      });
-
-      if (!quoteResponse.ok) throw new Error('Quote generation failed');
-
       toast({
-        title: "✅ Tilbud Genereret",
-        description: "AI har analyseret og beregnet tilbuddet automatisk"
+        title: "✅ Analyse Færdig",
+        description: "Klik på sagen for at oprette tilbud"
       });
 
       await loadCases();
     } catch (error) {
-      console.error('Auto-process failed:', error);
+      console.error('Analysis failed:', error);
       toast({
         title: "Fejl",
-        description: "Automatisk behandling fejlede",
+        description: "Analyse fejlede",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleDeleteCase = async (caseId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    if (!confirm('Er du sikker på at du vil slette denne sag?')) {
+      return;
+    }
+
+    try {
+      // Delete quotes first (foreign key constraint)
+      await supabase
+        .from('quotes')
+        .delete()
+        .eq('case_id', caseId);
+
+      // Delete case
+      await supabase
+        .from('cases')
+        .delete()
+        .eq('id', caseId);
+
+      toast({
+        title: "✅ Sag Slettet",
+        description: "Sagen er blevet slettet"
+      });
+
+      await loadCases();
+    } catch (error) {
+      console.error('Delete failed:', error);
+      toast({
+        title: "Fejl",
+        description: "Kunne ikke slette sagen",
         variant: "destructive"
       });
     }
@@ -289,23 +301,33 @@ export default function UnifiedDashboard() {
                         </div>
                       </div>
                       <div className="flex flex-col items-end gap-2 ml-4">
-                        {caseItem.status === 'new' && (
+                        <div className="flex items-center gap-2">
+                          {caseItem.status === 'new' && (
+                            <Button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAnalyzeCase(caseItem);
+                              }}
+                              size="sm"
+                              className="vvs-button-primary"
+                            >
+                              <Brain className="h-4 w-4 mr-2" />
+                              Start AI Analyse
+                            </Button>
+                          )}
                           <Button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleProcessCase(caseItem);
-                            }}
+                            onClick={(e) => handleDeleteCase(caseItem.id, e)}
                             size="sm"
-                            className="vvs-button-primary"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
                           >
-                            <Brain className="h-4 w-4 mr-2" />
-                            Start AI Analyse
+                            <Trash2 className="h-4 w-4" />
                           </Button>
-                        )}
+                        </div>
                         {caseItem.quotes && caseItem.quotes.length > 0 && (
                           <div className="flex items-center gap-2 text-green-600 text-sm">
                             <CheckCircle className="h-4 w-4" />
-                            <span>Tilbud genereret</span>
+                            <span>Tilbud {caseItem.quotes[0].status === 'draft' ? 'draft' : 'genereret'}</span>
                           </div>
                         )}
                       </div>

@@ -132,31 +132,93 @@ export default function SmartQuoteWizard({ caseData, onComplete, onCancel }: Sma
     };
   };
 
-  const handleGenerateQuote = async () => {
+  const handleCreateQuote = async () => {
     setLoading(true);
     try {
-      // Save feedback for learning
       const costs = getTotalCost();
       
-      const { data: quote, error } = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/calculate-quote', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
+      // Import supabase at the top if needed
+      const { supabase } = await import('@/integrations/supabase/client');
+      
+      // Generate quote number
+      const quoteNumber = `VVS-${Date.now().toString().slice(-6)}`;
+      
+      // Create quote
+      const { data: quote, error: quoteError } = await supabase
+        .from('quotes')
+        .insert({
+          case_id: caseData.id,
+          quote_number: quoteNumber,
+          subtotal: costs.subtotal,
+          vat_amount: costs.vat,
+          total_amount: costs.total,
+          labor_hours: hours,
+          travel_cost: 0,
+          service_vehicle_cost: costs.serviceCar,
+          status: 'draft',
+          valid_until: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+        })
+        .select()
+        .single();
+
+      if (quoteError) throw quoteError;
+
+      // Create quote lines
+      const quoteLines = [
+        {
+          quote_id: quote.id,
+          line_type: 'labor',
+          description: `Arbejde - ${analysis.project.type}`,
+          quantity: hours,
+          unit_price: 550,
+          total_price: costs.laborCost,
+          labor_hours: hours,
+          sort_order: 1
         },
-        body: JSON.stringify({ caseId: caseData.id })
-      }).then(r => r.json());
+        {
+          quote_id: quote.id,
+          line_type: 'service_vehicle',
+          description: 'Servicebil',
+          quantity: 1,
+          unit_price: costs.serviceCar,
+          total_price: costs.serviceCar,
+          sort_order: 2
+        },
+        ...materials.map((m, idx) => ({
+          quote_id: quote.id,
+          line_type: 'material' as const,
+          description: m.description,
+          quantity: m.quantity,
+          unit_price: m.unit_price,
+          total_price: m.total_price,
+          material_code: m.supplier_item_id,
+          sort_order: idx + 3
+        }))
+      ];
+
+      const { error: linesError } = await supabase
+        .from('quote_lines')
+        .insert(quoteLines);
+
+      if (linesError) throw linesError;
+
+      // Update case status
+      await supabase
+        .from('cases')
+        .update({ status: 'quoted' })
+        .eq('id', caseData.id);
 
       toast({
-        title: "✅ Tilbud Genereret",
-        description: "Dit collaborative tilbud er klar"
+        title: "✅ Tilbud Oprettet",
+        description: `Tilbud ${quoteNumber} er gemt som draft`
       });
 
       onComplete();
     } catch (error) {
+      console.error('Quote creation error:', error);
       toast({
         title: "Fejl",
-        description: "Kunne ikke generere tilbud",
+        description: "Kunne ikke oprette tilbud",
         variant: "destructive"
       });
     } finally {
@@ -320,14 +382,23 @@ export default function SmartQuoteWizard({ caseData, onComplete, onCancel }: Sma
               </div>
             </div>
 
-            <Button 
-              onClick={handleGenerateQuote}
-              disabled={loading || materials.length === 0}
-              className="w-full mt-4 vvs-button-primary"
-            >
-              <CheckCircle className="h-4 w-4 mr-2" />
-              Generer Tilbud
-            </Button>
+            <div className="flex gap-2 mt-4">
+              <Button 
+                onClick={onCancel}
+                variant="outline"
+                className="flex-1"
+              >
+                Annuller
+              </Button>
+              <Button 
+                onClick={handleCreateQuote}
+                disabled={loading || materials.length === 0}
+                className="flex-1 vvs-button-primary"
+              >
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Opret Tilbud
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
