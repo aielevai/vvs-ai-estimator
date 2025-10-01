@@ -323,6 +323,33 @@ export type Database = {
         }
         Relationships: []
       }
+      material_search_cache: {
+        Row: {
+          confidence: number | null
+          created_at: string
+          id: string
+          materials: Json
+          project_type: string | null
+          search_query: string
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string
+          id?: string
+          materials: Json
+          project_type?: string | null
+          search_query: string
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string
+          id?: string
+          materials?: Json
+          project_type?: string | null
+          search_query?: string
+        }
+        Relationships: []
+      }
       project_intelligence: {
         Row: {
           bom_suggestions: Json | null
@@ -369,6 +396,81 @@ export type Database = {
             columns: ["case_id"]
             isOneToOne: false
             referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quote_feedback: {
+        Row: {
+          accuracy_score: number | null
+          actual_cost: number | null
+          actual_hours_spent: number | null
+          actual_materials_used: Json | null
+          ai_confidence: number | null
+          ai_suggested_hours: number | null
+          ai_suggested_materials: Json | null
+          case_id: string | null
+          completed_at: string | null
+          created_at: string
+          id: string
+          notes: string | null
+          quote_id: string | null
+          user_final_hours: number | null
+          user_final_materials: Json | null
+          user_modifications: Json | null
+          user_satisfaction: number | null
+        }
+        Insert: {
+          accuracy_score?: number | null
+          actual_cost?: number | null
+          actual_hours_spent?: number | null
+          actual_materials_used?: Json | null
+          ai_confidence?: number | null
+          ai_suggested_hours?: number | null
+          ai_suggested_materials?: Json | null
+          case_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          quote_id?: string | null
+          user_final_hours?: number | null
+          user_final_materials?: Json | null
+          user_modifications?: Json | null
+          user_satisfaction?: number | null
+        }
+        Update: {
+          accuracy_score?: number | null
+          actual_cost?: number | null
+          actual_hours_spent?: number | null
+          actual_materials_used?: Json | null
+          ai_confidence?: number | null
+          ai_suggested_hours?: number | null
+          ai_suggested_materials?: Json | null
+          case_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          quote_id?: string | null
+          user_final_hours?: number | null
+          user_final_materials?: Json | null
+          user_modifications?: Json | null
+          user_satisfaction?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_feedback_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quote_feedback_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
             referencedColumns: ["id"]
           },
         ]

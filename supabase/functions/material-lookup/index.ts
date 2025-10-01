@@ -180,61 +180,40 @@ function getSearchTermsForProject(projectType: string, materialeAnalyse?: any): 
 }
 
 function createMaterialSelectionPrompt(projectType: string, description: string, size: number, complexity: string, materialeAnalyse: any, products: any[]): string {
-  return `Som ekspert VVS-materialespecialist med 20+ års erfaring skal du vælge de rigtige materialer til dette projekt efter Valentin VVS standarder og danske bygningsregler.
+  // Shorter, more focused prompt for better GPT-5 performance
+  const topProducts = products.slice(0, 50); // Reduced from 100 to 50
+  
+  return `VVS projekt: ${projectType} (${size} ${getSizeUnit(projectType)}, ${complexity})
 
-PROJEKT DETALJER:
-Type: ${projectType}
 Beskrivelse: ${description}
-Størrelse: ${size} (${getSizeUnit(projectType)})
-Kompleksitet: ${complexity}
 
-${materialeAnalyse ? `DETALJERET MATERIALE ANALYSE:
-${JSON.stringify(materialeAnalyse, null, 2)}` : ''}
-
-TILGÆNGELIGE AHLSELL PRODUKTER (${products.length} produkter med faktiske priser):
-${products.slice(0, 100).map(p => 
-  `- ID: ${p.supplier_item_id || 'N/A'} | VVS: ${p.vvs_number || 'N/A'} | ${p.short_description} ${p.long_description ? '- ' + p.long_description : ''} | ${p.net_price} DKK per ${p.price_unit} ${p.is_on_stock ? '(På lager)' : '(Ikke på lager)'}`
+Top ${topProducts.length} Ahlsell produkter:
+${topProducts.map(p => 
+  `${p.supplier_item_id} | ${p.short_description} | ${p.net_price} kr/${p.price_unit}`
 ).join('\n')}
 
-OPGAVE: Vælg de nødvendige materialer og beregn præcise mængder baseret på Valentin VVS erfaring og danske standarder.
-
-RETURNER JSON FORMAT:
+Returner JSON med materialer:
 {
-  "materials": [
-    {
-      "supplier_item_id": "eksakt ID fra listen",
-      "vvs_number": "VVS nummer hvis tilgængeligt", 
-      "description": "kort beskrivelse",
-      "quantity": antal_baseret_på_projektstørrelse_og_standarder,
-      "unit_price": pris_fra_produktliste,
-      "unit": "enhed fra liste",
-      "total_price": quantity * unit_price,
-      "reasoning": "detaljeret begrundelse inkl. beregningsgrundlag",
-      "category": "hovedkategori",
-      "priority": "critical/important/optional"
-    }
-  ],
-  "reasoning": "samlet begrundelse for materialevalgene og totale mængder",
-  "quality_notes": "kvalitets- og sikkerhedsovervejelser",
-  "installation_tips": "vigtige installationsanmærkninger"
+  "materials": [{
+    "supplier_item_id": "fra listen",
+    "description": "kort",
+    "quantity": antal,
+    "unit_price": pris,
+    "unit": "enhed",
+    "total_price": quantity * unit_price,
+    "reasoning": "hvorfor",
+    "validated": true
+  }],
+  "reasoning": "samlet begrundelse"
 }
 
-VALENTIN VVS STANDARDER & REGLER:
-1. PRODUKTVALG: Brug KUN supplier_item_id eller vvs_number fra den givne produktliste
-2. MÆNGDEBEREGNING: Følg danske VVS-standarder og bygningsreglement BR18
-3. KVALITET: Prioritér kendte mærker (Danfoss, Grundfos, Uponor, Rehau)
-4. SIKKERHEDSMARGIN: 15-20% på kritiske komponenter, 10% på standard dele
-5. KOMPLETTE SYSTEMER: Inkluder alle nødvendige komponenter + installations-tilbehør
-6. PROJEKTTYPE-SPECIFIKT:
+Regler:
+- Brug KUN produkter fra listen
+- Følg danske VVS-standarder
+- 10-15% sikkerhedsmargin
+- Komplet system med alle nødvendige dele
 
-${getProjectSpecificGuidelines(projectType, size, complexity)}
-
-7. PRISOPTIMERING: Maksimer værdi for pengene - vælg rigtig kvalitet til opgaven
-8. LAGERSTATUS: Prioritér produkter på lager når muligt
-9. KOMPATIBILITET: Sørg for at alle dele passer sammen systemisk
-10. DANSKE STANDARDER: Følg DS-, EN- og BR-standarder for VVS
-
-Returner KUN valid JSON uden ekstra tekst.`;
+Returner KUN valid JSON.`;
 }
 
 function getSizeUnit(projectType: string): string {
