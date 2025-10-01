@@ -86,18 +86,37 @@ serve(async (req) => {
     let aiMaterials;
     
     try {
-      const content = aiData.choices[0].message.content.trim();
-      console.log('Raw AI response content:', content);
+      const content = aiData.choices[0]?.message?.content?.trim();
+      console.log('Raw AI response:', content?.substring(0, 200));
       
-      // Try to extract JSON from markdown code blocks if present
-      const jsonMatch = content.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
+      if (!content || content.length < 10) {
+        console.error('Empty or too short AI response');
+        throw new Error('AI returned empty response');
+      }
+      
+      // Try to extract JSON from markdown code blocks
+      const jsonMatch = content.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
       const jsonContent = jsonMatch ? jsonMatch[1] : content;
       
-      aiMaterials = JSON.parse(jsonContent);
-      console.log('Successfully parsed AI materials:', aiMaterials);
+      // Try to find JSON object in the response
+      const objectMatch = jsonContent.match(/\{[\s\S]*"materials"[\s\S]*?\}/);
+      const finalJson = objectMatch ? objectMatch[0] : jsonContent;
+      
+      aiMaterials = JSON.parse(finalJson);
+      
+      if (!aiMaterials.materials || !Array.isArray(aiMaterials.materials)) {
+        throw new Error('Invalid materials structure');
+      }
+      
+      console.log(`Parsed ${aiMaterials.materials.length} materials`);
     } catch (parseError) {
-      console.error('Failed to parse AI response:', aiData.choices[0].message.content);
-      throw new Error(`Invalid AI response format: ${(parseError as any).message}`);
+      console.error('AI parsing failed:', parseError);
+      // Fallback to direct database search
+      console.log('Falling back to direct database search');
+      const directMaterials = await searchDatabaseDirectly(supabase, projectType, materialeAnalyse, estimatedSize, products);
+      return new Response(JSON.stringify(directMaterials), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     // Validate and enhance the AI response
@@ -180,40 +199,29 @@ function getSearchTermsForProject(projectType: string, materialeAnalyse?: any): 
 }
 
 function createMaterialSelectionPrompt(projectType: string, description: string, size: number, complexity: string, materialeAnalyse: any, products: any[]): string {
-  // Shorter, more focused prompt for better GPT-5 performance
-  const topProducts = products.slice(0, 50); // Reduced from 100 to 50
+  // Much shorter, focused prompt optimized for GPT-5
+  const topProducts = products.slice(0, 30); // Further reduced for stability
   
-  return `VVS projekt: ${projectType} (${size} ${getSizeUnit(projectType)}, ${complexity})
+  // Build specific component list from materiale_analyse
+  let componentFocus = '';
+  if (materialeAnalyse?.specifikke_komponenter) {
+    const topComponents = materialeAnalyse.specifikke_komponenter.slice(0, 5);
+    componentFocus = `\nNødvendige komponenter:\n${topComponents.map((c: any) => 
+      `- ${c.komponent}: ${c.mængde} ${c.enhed}`
+    ).join('\n')}`;
+  }
+  
+  return `Projekt: ${projectType} (${size} ${getSizeUnit(projectType)})${componentFocus}
 
-Beskrivelse: ${description}
-
-Top ${topProducts.length} Ahlsell produkter:
-${topProducts.map(p => 
-  `${p.supplier_item_id} | ${p.short_description} | ${p.net_price} kr/${p.price_unit}`
+Produkter:
+${topProducts.map((p, i) => 
+  `${i+1}. ${p.supplier_item_id}: ${p.short_description?.substring(0, 50) || 'N/A'} - ${p.net_price}kr`
 ).join('\n')}
 
-Returner JSON med materialer:
-{
-  "materials": [{
-    "supplier_item_id": "fra listen",
-    "description": "kort",
-    "quantity": antal,
-    "unit_price": pris,
-    "unit": "enhed",
-    "total_price": quantity * unit_price,
-    "reasoning": "hvorfor",
-    "validated": true
-  }],
-  "reasoning": "samlet begrundelse"
-}
+Returner JSON array:
+{"materials":[{"supplier_item_id":"ID","description":"navn","quantity":1,"unit_price":100,"unit":"stk","total_price":100}]}
 
-Regler:
-- Brug KUN produkter fra listen
-- Følg danske VVS-standarder
-- 10-15% sikkerhedsmargin
-- Komplet system med alle nødvendige dele
-
-Returner KUN valid JSON.`;
+Vælg 5-10 nødvendige produkter fra listen.`;
 }
 
 function getSizeUnit(projectType: string): string {
@@ -315,6 +323,33 @@ function validateAndEnhanceMaterials(aiMaterials: any, products: any[], projectT
   }
 
   return validatedMaterials;
+}
+
+async function searchDatabaseDirectly(supabase: any, projectType: string, materialeAnalyse: any, estimatedSize: number, products: any[]): Promise<any> {
+  console.log('Direct database search for materials');
+  
+  // Use top matching products directly
+  const selectedProducts = products.slice(0, 15).map(p => ({
+    supplier_item_id: p.supplier_item_id,
+    description: p.short_description || p.long_description || 'Material',
+    quantity: Math.ceil(estimatedSize / 5), // Simple heuristic
+    unit_price: p.net_price || p.gross_price || 100,
+    unit: p.price_unit || 'stk',
+    total_price: Math.ceil(estimatedSize / 5) * (p.net_price || p.gross_price || 100),
+    validated: true,
+    supplier_id: 'ahlsell',
+    product_id: p.id,
+    in_stock: p.is_on_stock
+  }));
+  
+  const totalCost = selectedProducts.reduce((sum, m) => sum + m.total_price, 0);
+  
+  return {
+    materials: selectedProducts,
+    total_cost: totalCost,
+    mode: 'database_direct',
+    ai_reasoning: 'Direkte database søgning - AI parsering fejlede'
+  };
 }
 
 function createFallbackMaterials(projectType: string, estimatedSize: number): any[] {

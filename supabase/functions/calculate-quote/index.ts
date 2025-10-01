@@ -10,7 +10,7 @@ const corsHeaders = {
 const VALENTIN_PRICING_LOGIC = {
   baseRates: {
     hourlyRate: 550,
-    serviceVehicle: 65,
+    serviceVehicle: 650, // Realistic service car cost
     minimumProject: 4500,
   },
   hoursPerProjectType: {

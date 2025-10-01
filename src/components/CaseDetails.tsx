@@ -6,9 +6,10 @@ import { Separator } from "@/components/ui/separator";
 import { Case } from "@/types";
 import { formatDate, formatCurrency, getProjectTypeLabel } from "@/lib/valentin-config";
 import { db } from "@/lib/supabase-client";
-import { ArrowLeft, Brain, Calculator, CheckCircle } from "lucide-react";
+import { ArrowLeft, Brain, Calculator, CheckCircle, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import QuoteViewer from "./QuoteViewer";
+import SmartQuoteWizard from "./SmartQuoteWizard";
 
 interface CaseDetailsProps {
   case: Case;
@@ -20,6 +21,7 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [calculating, setCalculating] = useState(false);
+  const [showWizard, setShowWizard] = useState(false);
   const { toast } = useToast();
 
   const handleAnalyze = async () => {
@@ -167,25 +169,13 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
             <Separator />
 
             <div className="flex gap-3">
-              {caseData.status === 'new' && (
+              {!hasQuote && (
                 <Button 
-                  onClick={handleAnalyze} 
-                  disabled={analyzing}
+                  onClick={() => setShowWizard(true)} 
                   className="vvs-button-primary"
                 >
-                  <Brain className="h-4 w-4 mr-2" />
-                  {analyzing ? 'Analyserer...' : 'Analyser med AI'}
-                </Button>
-              )}
-
-              {caseData.status === 'analyzed' && caseData.extracted_data && (
-                <Button 
-                  onClick={handleGenerateQuote} 
-                  disabled={calculating}
-                  className="vvs-button-primary"
-                >
-                  <Calculator className="h-4 w-4 mr-2" />
-                  {calculating ? 'Beregner...' : 'Generer Tilbud'}
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  Start Smart Tilbud Generator
                 </Button>
               )}
 
@@ -256,6 +246,18 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
               )}
             </CardContent>
           </Card>
+        )}
+
+        {/* Smart Quote Wizard */}
+        {showWizard && !hasQuote && (
+          <SmartQuoteWizard
+            caseData={caseData}
+            onComplete={() => {
+              setShowWizard(false);
+              onUpdate();
+            }}
+            onCancel={() => setShowWizard(false)}
+          />
         )}
 
         {/* Quote Viewer */}
