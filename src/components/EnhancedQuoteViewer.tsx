@@ -84,15 +84,46 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ quote,
               </div>
               <div>
                 <div className="text-sm text-muted-foreground">Timer total</div>
-                <div className="font-medium">{pricingAnalysis.total_hours} timer</div>
+                <div className="font-medium">{pricingAnalysis.laborHours || pricingAnalysis.total_hours} timer</div>
               </div>
             </div>
 
-            {pricingAnalysis.material_source && (
+            {/* Minimum Logic Display */}
+            {pricingAnalysis.calibrationFactors && (
+              <div className="space-y-2 p-4 bg-muted/50 rounded-lg">
+                <div className="text-sm font-medium">Anvendte minimummer:</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                  {pricingAnalysis.calibrationFactors.laborMinimumApplied && (
+                    <Alert className="py-2">
+                      <Info className="h-4 w-4" />
+                      <AlertDescription className="text-xs">
+                        <strong>Arbejdstime minimum:</strong> {pricingAnalysis.calibrationFactors.minLaborHours} timer anvendt
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  {pricingAnalysis.calibrationFactors.projectMinimumApplied && (
+                    <Alert className="py-2">
+                      <Info className="h-4 w-4" />
+                      <AlertDescription className="text-xs">
+                        <strong>Projektminimum:</strong> 4.500 kr anvendt på subtotal
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  {!pricingAnalysis.calibrationFactors.laborMinimumApplied && 
+                   !pricingAnalysis.calibrationFactors.projectMinimumApplied && (
+                    <div className="text-xs text-muted-foreground col-span-2">
+                      Ingen minimummer påvirker denne pris
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {pricingAnalysis.calibrationFactors?.materialSource && (
               <div className="flex items-center justify-between">
                 <span className="text-sm">Materialekilde:</span>
                 <div className="flex items-center gap-2">
-                  {getMaterialSourceBadge(pricingAnalysis.material_source)}
+                  {getMaterialSourceBadge(pricingAnalysis.calibrationFactors.materialSource)}
                   {pricingAnalysis.material_validation > 0 && (
                     <Badge variant="outline">
                       {pricingAnalysis.material_validation}/{pricingAnalysis.material_count} valideret
@@ -190,7 +221,7 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ quote,
       </Card>
 
       {/* Calculation Details */}
-      {pricingAnalysis?.calculation_details && (
+      {pricingAnalysis?.breakdown && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -200,16 +231,28 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ quote,
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {pricingAnalysis.calculation_details.map((detail: any, index: number) => (
-                <div key={index} className="flex justify-between items-center">
-                  <div>
+              {pricingAnalysis.breakdown.map((detail: any, index: number) => (
+                <div key={index} className="flex justify-between items-start">
+                  <div className="flex-1">
                     <div className="font-medium">{detail.description}</div>
                     <div className="text-sm text-muted-foreground">{detail.calculation}</div>
                   </div>
-                  <div className="font-medium">{formatCurrency(detail.amount)}</div>
+                  <div className="font-medium text-right">{formatCurrency(detail.amount)}</div>
                 </div>
               ))}
             </div>
+
+            {pricingAnalysis.calibrationFactors && (
+              <div className="mt-4 pt-4 border-t space-y-2">
+                <div className="text-sm font-medium">Kalibreringsfaktorer:</div>
+                <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                  <div>Beta: {pricingAnalysis.calibrationFactors.beta?.toFixed(2)}</div>
+                  <div>Historisk faktor: {pricingAnalysis.calibrationFactors.historicalFactor?.toFixed(2)}</div>
+                  <div>Kompleksitet: {pricingAnalysis.calibrationFactors.complexityMultiplier?.toFixed(2)}</div>
+                  <div>Reference størrelse: {pricingAnalysis.calibrationFactors.referenceSize}</div>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

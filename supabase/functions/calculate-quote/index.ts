@@ -7,42 +7,117 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const VALENTIN_PRICING_LOGIC = {
-  baseRates: {
-    hourlyRate: 595,
-    serviceVehicle: 65, // Per hour
-    minimumProject: 4500,
-  },
-  hoursPerProjectType: {
-    bathroom_renovation: { baseHours: 8, unit: "m2", averageSize: 10, minHours: 4, maxHours: 200, beta: 1.0 },
-    kitchen_plumbing: { baseHours: 4, unit: "m2", averageSize: 8, minHours: 3, maxHours: 100, beta: 1.0 },
-    pipe_installation: { baseHours: 0.7, unit: "meter", averageSize: 15, minHours: 2, maxHours: 150, beta: 1.0 },
-    district_heating: { baseHours: 16, unit: "connection", averageSize: 1, additionalPerUnit: 0.5, minHours: 8, maxHours: 40, beta: 1.0 },
-    floor_heating: { baseHours: 1.5, unit: "m2", averageSize: 35, minHours: 4, maxHours: 200, beta: 1.0 },
-    radiator_installation: { baseHours: 4, unit: "units", averageSize: 3, minHours: 2, maxHours: 80, beta: 1.0 },
-    service_call: { baseHours: 3, unit: "job", averageSize: 1, minHours: 2, maxHours: 50, beta: 1.0 }
-  },
-  materialCostPerType: {
-    bathroom_renovation: 3500,
-    kitchen_plumbing: 2200,
-    pipe_installation: 180,
-    district_heating: 24000,
-    floor_heating: 800,
-    radiator_installation: 2500,
-    service_call: 500
-  },
-  complexityMultipliers: { 
-    simple: 0.8, 
-    medium: 1.0, 
-    complex: 1.3, 
-    emergency: 1.5 
-  },
-  sizeDiscounts: { 
-    small: { threshold: 0, discount: 0 }, 
-    medium: { threshold: 50, discount: 0.1 }, 
-    large: { threshold: 150, discount: 0.2 } 
-  }
+// In-memory cache for pricing configuration
+let cachedPricingConfig: any = null;
+let cachedPricingProfiles: any = null;
+let cacheTimestamp: number = 0;
+const CACHE_TTL = 60000; // 1 minute cache
+
+// Fallback configuration from environment variables
+const FALLBACK_CONFIG = {
+  hourlyRate: Number(Deno.env.get('HOURLY_RATE') || '595'),
+  serviceVehicleRate: Number(Deno.env.get('SERVICE_VEHICLE_RATE') || '65'),
+  minimumProject: Number(Deno.env.get('MINIMUM_PROJECT') || '4500'),
+  vatRate: Number(Deno.env.get('VAT_RATE') || '0.25'),
 };
+
+// Default profiles as fallback
+const DEFAULT_PROFILES: Record<string, any> = {
+  bathroom_renovation: { baseHours: 8, averageSize: 10, beta: 1.0, minHours: 4, maxHours: 200, minLaborHours: 6, applyMinimumProject: false, materialCostPerUnit: 3500 },
+  kitchen_plumbing: { baseHours: 4, averageSize: 8, beta: 1.0, minHours: 3, maxHours: 100, minLaborHours: 4, applyMinimumProject: false, materialCostPerUnit: 2200 },
+  pipe_installation: { baseHours: 0.7, averageSize: 15, beta: 1.0, minHours: 2, maxHours: 150, minLaborHours: 3, applyMinimumProject: false, additionalPerUnit: 0, materialCostPerUnit: 180 },
+  district_heating: { baseHours: 16, averageSize: 1, beta: 1.0, minHours: 8, maxHours: 40, minLaborHours: 8, applyMinimumProject: false, additionalPerUnit: 0.5, materialCostPerUnit: 24000 },
+  floor_heating: { baseHours: 1.5, averageSize: 35, beta: 1.0, minHours: 4, maxHours: 200, minLaborHours: 4, applyMinimumProject: false, materialCostPerUnit: 800 },
+  radiator_installation: { baseHours: 4, averageSize: 3, beta: 1.0, minHours: 2, maxHours: 80, minLaborHours: 3, applyMinimumProject: false, materialCostPerUnit: 2500 },
+  service_call: { baseHours: 3, averageSize: 1, beta: 1.0, minHours: 2, maxHours: 50, minLaborHours: 2, applyMinimumProject: true, materialCostPerUnit: 500 }
+};
+
+// Load pricing configuration from database with caching
+async function loadPricingConfig(supabase: any): Promise<any> {
+  const now = Date.now();
+  
+  // Return cached config if still valid
+  if (cachedPricingConfig && (now - cacheTimestamp) < CACHE_TTL) {
+    return cachedPricingConfig;
+  }
+
+  try {
+    // Fetch latest pricing config
+    const { data: configData, error: configError } = await supabase
+      .from('pricing_config')
+      .select('*')
+      .order('effective_from', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (configError || !configData) {
+      console.log('Failed to load pricing_config from database, using fallback:', configError);
+      cachedPricingConfig = FALLBACK_CONFIG;
+    } else {
+      cachedPricingConfig = {
+        hourlyRate: Number(configData.hourly_rate),
+        serviceVehicleRate: Number(configData.service_vehicle_rate),
+        minimumProject: Number(configData.minimum_project),
+        vatRate: Number(configData.vat_rate),
+      };
+      console.log('Loaded pricing config from database:', cachedPricingConfig);
+    }
+
+    cacheTimestamp = now;
+    return cachedPricingConfig;
+  } catch (error) {
+    console.error('Error loading pricing config:', error);
+    return FALLBACK_CONFIG;
+  }
+}
+
+// Load pricing profiles from database with caching
+async function loadPricingProfiles(supabase: any): Promise<any> {
+  const now = Date.now();
+  
+  // Return cached profiles if still valid
+  if (cachedPricingProfiles && (now - cacheTimestamp) < CACHE_TTL) {
+    return cachedPricingProfiles;
+  }
+
+  try {
+    const { data: profilesData, error: profilesError } = await supabase
+      .from('pricing_profiles')
+      .select('*');
+
+    if (profilesError || !profilesData || profilesData.length === 0) {
+      console.log('Failed to load pricing_profiles from database, using default profiles:', profilesError);
+      cachedPricingProfiles = DEFAULT_PROFILES;
+    } else {
+      cachedPricingProfiles = {};
+      for (const profile of profilesData) {
+        cachedPricingProfiles[profile.project_type] = {
+          baseHours: Number(profile.base_hours),
+          averageSize: Number(profile.average_size),
+          beta: Number(profile.beta_default),
+          minHours: Number(profile.min_hours),
+          maxHours: Number(profile.max_hours),
+          minLaborHours: Number(profile.min_labor_hours),
+          applyMinimumProject: Boolean(profile.apply_minimum_project),
+          materialCostPerUnit: Number(profile.material_cost_per_unit),
+          additionalPerUnit: 0, // Set specific values if needed
+        };
+        
+        // Special handling for district_heating
+        if (profile.project_type === 'district_heating') {
+          cachedPricingProfiles[profile.project_type].additionalPerUnit = 0.5;
+        }
+      }
+      console.log('Loaded pricing profiles from database');
+    }
+
+    cacheTimestamp = now;
+    return cachedPricingProfiles;
+  } catch (error) {
+    console.error('Error loading pricing profiles:', error);
+    return DEFAULT_PROFILES;
+  }
+}
 
 // Helper to convert text complexity to numeric
 function complexityToNumeric(complexity: string): number {
@@ -76,6 +151,10 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Load pricing configuration
+    const pricingConfig = await loadPricingConfig(supabase);
+    const pricingProfiles = await loadPricingProfiles(supabase);
+
     // Get case data
     const { data: caseData, error: caseError } = await supabase
       .from('cases')
@@ -99,94 +178,78 @@ serve(async (req) => {
         const complexityNumeric = complexityToNumeric(analysis.project.complexity);
         
         const historicalResponse = await supabase.functions.invoke('historical-analysis', {
-          body: {
+          body: { 
             projectType: analysis.project.type,
+            size: analysis.project.estimated_size,
             complexity: complexityNumeric,
-            complexityText: analysis.project.complexity,
-            estimatedSize: analysis.project.estimated_size,
-            description: analysis.project.description
+            signals: analysis.project
           }
         });
-        
+
         if (historicalResponse.data) {
           historicalData = historicalResponse.data;
-          console.log('Got historical analysis for calibration:', JSON.stringify(historicalData.analysis));
+          console.log('Historical analysis result:', historicalData);
         }
       }
-    } catch (histError) {
-      console.log('Historical analysis not available, using defaults:', histError);
+    } catch (historicalError) {
+      console.log('Historical analysis failed or not available:', historicalError);
     }
 
-    // Get AI-based material pricing
-    let materialData;
+    // Get AI material lookup
+    let materialData = null;
     try {
-      console.log('Calling material-lookup for AI pricing...');
-      const materialResponse = await supabase.functions.invoke('material-lookup', {
-        body: {
-          projectType: caseData.extracted_data?.project?.type || 'service_call',
-          projectDescription: caseData.extracted_data?.project?.description || 'Standard VVS arbejde',
-          estimatedSize: caseData.extracted_data?.project?.estimated_size || 1,
-          complexity: caseData.extracted_data?.project?.complexity || 'medium',
-          materialeAnalyse: caseData.extracted_data?.materiale_analyse
+      const analysis = caseData.extracted_data;
+      if (analysis?.project) {
+        const materialResponse = await supabase.functions.invoke('material-lookup', {
+          body: { 
+            caseId,
+            projectType: analysis.project.type,
+            description: analysis.project.description || caseData.description || '',
+            size: analysis.project.estimated_size
+          }
+        });
+
+        if (materialResponse.data && !materialResponse.error) {
+          materialData = materialResponse.data;
+          console.log('Material lookup result:', materialData);
         }
-      });
-      
-      if (materialResponse.error) {
-        console.error('Material lookup error:', materialResponse.error);
-        materialData = { total_cost: 0, materials: [] };
-      } else {
-        materialData = materialResponse.data;
-        console.log(`AI Material cost: ${materialData.total_cost} DKK`);
       }
-    } catch (error) {
-      console.error('Failed to get AI material pricing:', error);
-      materialData = { total_cost: 0, materials: [] };
+    } catch (materialError) {
+      console.log('Material lookup failed or not available:', materialError);
     }
 
-    // Calculate pricing breakdown with AI materials and historical calibration
-    const priceBreakdown = calculateProjectPrice(caseData.extracted_data, materialData, historicalData);
-    const quoteNumber = `VVS-${Date.now().toString().slice(-6)}`;
+    // Calculate quote
+    const priceBreakdown = calculateProjectPrice(
+      caseData.extracted_data, 
+      materialData, 
+      historicalData,
+      pricingConfig,
+      pricingProfiles
+    );
 
-    console.log('Price breakdown calculated:', JSON.stringify({
-      laborHours: priceBreakdown.laborHours,
-      laborCost: priceBreakdown.laborCost,
-      vehicleCost: priceBreakdown.vehicleCost,
-      materialCost: priceBreakdown.materialCost,
-      subtotal: priceBreakdown.subtotal,
-      vat: priceBreakdown.vat,
-      total: priceBreakdown.total,
-      breakdown: priceBreakdown.breakdown,
-      materialSource: materialData ? (materialData.mode || 'ai_optimized') : 'standard_estimate',
-      materialValidation: materialData?.validated_count || 0,
-      materialCount: materialData?.materials?.length || 0,
-      historicalCalibration: historicalData ? 'applied' : 'not_available',
-      calibrationFactors: priceBreakdown.calibrationFactors
-    }, null, 2));
-
-    // Check for existing quotes to prevent duplicates
-    const { data: existingQuotes, error: checkError } = await supabase
+    // Check for existing quotes for this case
+    const { data: existingQuotes } = await supabase
       .from('quotes')
-      .select('id, status')
+      .select('id')
       .eq('case_id', caseId)
-      .in('status', ['draft', 'sent']);
-
-    if (checkError) {
-      console.error('Error checking for existing quotes:', checkError);
-    }
+      .limit(1);
 
     if (existingQuotes && existingQuotes.length > 0) {
-      console.log(`Quote already exists for case ${caseId}, skipping creation`);
+      console.log('Quote already exists for case:', caseId);
       return new Response(
         JSON.stringify({ 
-          error: 'Quote already exists',
-          message: 'Der findes allerede et tilbud for denne sag',
-          existing_quote_id: existingQuotes[0].id
+          error: 'Quote already exists for this case',
+          existingQuoteId: existingQuotes[0].id 
         }),
         { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Create quote
+    // Create quote record
+    const quoteNumber = `Q-${Date.now()}`;
+    const validUntil = new Date();
+    validUntil.setDate(validUntil.getDate() + 30);
+
     const { data: quote, error: quoteError } = await supabase
       .from('quotes')
       .insert({
@@ -199,73 +262,38 @@ serve(async (req) => {
         travel_cost: 0,
         service_vehicle_cost: priceBreakdown.vehicleCost,
         status: 'draft',
-        valid_until: new Date(Date.now() + 30*24*60*60*1000).toISOString().split('T')[0]
+        valid_until: validUntil.toISOString().split('T')[0]
       })
       .select()
       .single();
 
     if (quoteError) {
       console.error('Failed to create quote:', quoteError);
-      throw quoteError;
+      return new Response(
+        JSON.stringify({ error: 'Failed to create quote' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    // Create quote lines with detailed materials from AI
-    const lines = [
-      {
-        quote_id: quote.id,
-        line_type: 'labor',
-        description: `VVS arbejde (${priceBreakdown.laborHours} timer)`,
-        quantity: priceBreakdown.laborHours,
-        unit_price: VALENTIN_PRICING_LOGIC.baseRates.hourlyRate,
-        total_price: priceBreakdown.laborCost,
-        labor_hours: priceBreakdown.laborHours,
-        sort_order: 1,
-      },
-      {
-        quote_id: quote.id,
-        line_type: 'service_vehicle',
-        description: `Servicebil og værktøj (${priceBreakdown.laborHours} timer)`,
-        quantity: priceBreakdown.laborHours,
-        unit_price: VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle,
-        total_price: priceBreakdown.vehicleCost,
-        sort_order: 2,
-      }
-    ];
-
-    // Add detailed material lines from AI analysis
-    if (materialData?.materials && materialData.materials.length > 0) {
-      materialData.materials.forEach((material: any, index: number) => {
-        lines.push({
-          quote_id: quote.id,
-          line_type: 'material',
-          description: material.description || 'Materiale',
-          quantity: material.quantity || 1,
-          unit_price: material.unit_price || 0,
-          total_price: material.total_price || 0,
-          material_code: material.product_code,
-          sort_order: 10 + index,
-        } as any);
-      });
-    } else {
-      // Fallback single material line
-      lines.push({
-        quote_id: quote.id,
-        line_type: 'material',
-        description: `Materialer (${caseData.extracted_data?.project?.estimated_size || 1} ${caseData.extracted_data?.project?.size_unit || 'enheder'})`,
-        quantity: caseData.extracted_data?.project?.estimated_size || 1,
-        unit_price: priceBreakdown.materialCost / (caseData.extracted_data?.project?.estimated_size || 1),
-        total_price: priceBreakdown.materialCost,
-        sort_order: 10,
-      });
-    }
+    // Create quote lines
+    const quoteLines = priceBreakdown.breakdown.map((item: any, index: number) => ({
+      quote_id: quote.id,
+      line_type: item.description.includes('arbejde') ? 'labor' : 
+                 item.description.includes('vogn') ? 'service_vehicle' : 'material',
+      description: item.description,
+      quantity: 1,
+      unit_price: item.amount,
+      total_price: item.amount,
+      labor_hours: item.description.includes('arbejde') ? priceBreakdown.laborHours : null,
+      sort_order: index
+    }));
 
     const { error: linesError } = await supabase
       .from('quote_lines')
-      .insert(lines);
+      .insert(quoteLines);
 
     if (linesError) {
       console.error('Failed to create quote lines:', linesError);
-      throw linesError;
     }
 
     // Update case status
@@ -274,28 +302,16 @@ serve(async (req) => {
       .update({ status: 'quoted' })
       .eq('id', caseId);
 
-    console.log('Quote created successfully:', quote.id);
-
     return new Response(
-      JSON.stringify({
-        quote,
-        lines,
-        pricing_analysis: {
-          project_type: caseData.extracted_data?.project?.type,
-          estimated_size: caseData.extracted_data?.project?.estimated_size,
-          complexity: caseData.extracted_data?.project?.complexity,
-          total_hours: priceBreakdown.laborHours,
-          calculation_details: priceBreakdown.breakdown,
-          calibration_factors: priceBreakdown.calibrationFactors,
-          material_source: materialData ? (materialData.mode || 'ai_optimized') : 'standard_estimate',
-          material_validation: materialData?.validated_count || 0,
-          material_count: materialData?.materials?.length || 0,
-          ai_reasoning: materialData?.ai_reasoning,
-          historical_calibration: historicalData ? 'applied' : 'not_available'
-        }
+      JSON.stringify({ 
+        success: true,
+        quote: {
+          ...quote,
+          quote_lines: quoteLines
+        },
+        pricing_analysis: priceBreakdown
       }),
       { 
-        status: 200, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }
     );
@@ -315,8 +331,18 @@ serve(async (req) => {
   }
 });
 
-function calculateProjectPrice(analysis: any, materialData?: any, historicalData?: any): any {
-  if (!analysis?.project) return createFallbackPrice();
+function calculateProjectPrice(
+  analysis: any, 
+  materialData?: any, 
+  historicalData?: any,
+  pricingConfig?: any,
+  pricingProfiles?: any
+): any {
+  // Use provided config or fallback
+  const config = pricingConfig || FALLBACK_CONFIG;
+  const profiles = pricingProfiles || DEFAULT_PROFILES;
+
+  if (!analysis?.project) return createFallbackPrice(config, profiles);
 
   const projectType = analysis.project.type;
   const size = Number(analysis.project.estimated_size || 1);
@@ -324,22 +350,24 @@ function calculateProjectPrice(analysis: any, materialData?: any, historicalData
 
   console.log(`Calculating price for: ${projectType}, size: ${size}, complexity: ${complexity}`);
 
-  const config = VALENTIN_PRICING_LOGIC.hoursPerProjectType[projectType as keyof typeof VALENTIN_PRICING_LOGIC.hoursPerProjectType];
-  if (!config) {
-    console.log(`No config found for project type: ${projectType}, using fallback`);
-    return createFallbackPrice();
+  const profile = profiles[projectType];
+  if (!profile) {
+    console.log(`No profile found for project type: ${projectType}, using fallback`);
+    return createFallbackPrice(config, profiles);
   }
 
   // Extract calibration parameters from historical data
-  const beta = historicalData?.analysis?.beta || (config as any).beta || 1.0;
+  const beta = historicalData?.analysis?.beta || profile.beta || 1.0;
   const H = historicalData?.analysis?.historical_factor || 1.0;
-  const baseHours = config.baseHours || 3;
-  const averageSize = (config as any).averageSize || 1;
-  const additionalPerUnit = (config as any).additionalPerUnit || 0;
-  const minHours = (config as any).minHours || 2;
-  const maxHours = (config as any).maxHours || 100;
+  const baseHours = profile.baseHours || 3;
+  const averageSize = profile.averageSize || 1;
+  const additionalPerUnit = profile.additionalPerUnit || 0;
+  const minHours = profile.minHours || 2;
+  const maxHours = profile.maxHours || 100;
+  const minLaborHours = profile.minLaborHours || minHours;
+  const applyMinimumProject = profile.applyMinimumProject || false;
 
-  console.log(`Calibration: beta=${beta}, H=${H}, baseHours=${baseHours}, averageSize=${averageSize}`);
+  console.log(`Calibration: beta=${beta}, H=${H}, baseHours=${baseHours}, averageSize=${averageSize}, minLaborHours=${minLaborHours}`);
 
   // Calculate hours using reference-based formula
   // hours_raw = baseHours * (size / averageSize) ^ beta + max(size - 1, 0) * additionalPerUnit
@@ -352,7 +380,7 @@ function calculateProjectPrice(analysis: any, materialData?: any, historicalData
   console.log(`Hours calculation: base=${baseHours}, sizeRatio=${sizeRatio.toFixed(2)}, beta=${beta}, scaled=${scaledHours.toFixed(2)}, additional=${additionalHours.toFixed(2)}, raw=${hours_raw.toFixed(2)}`);
 
   // Apply complexity multiplier
-  const complexityMultiplier = VALENTIN_PRICING_LOGIC.complexityMultipliers[complexity as keyof typeof VALENTIN_PRICING_LOGIC.complexityMultipliers] || 1.0;
+  const complexityMultiplier = complexityToNumeric(complexity);
   let hours_adjusted = hours_raw * complexityMultiplier * H;
 
   console.log(`After complexity (${complexityMultiplier}) and historical factor (${H}): ${hours_adjusted.toFixed(2)}`);
@@ -360,44 +388,82 @@ function calculateProjectPrice(analysis: any, materialData?: any, historicalData
   // Clamp to min/max bounds
   hours_adjusted = Math.max(minHours, Math.min(hours_adjusted, maxHours));
   
-  // Round to nearest half hour (deferred to end)
+  // Round to nearest half hour
   const hours = Math.round(hours_adjusted * 2) / 2;
 
   console.log(`Final hours after clamp and round: ${hours}`);
 
-  // Calculate costs
-  const laborCost = hours * VALENTIN_PRICING_LOGIC.baseRates.hourlyRate;
+  // Calculate labor cost with minimum labor hours
+  const calculatedLaborCost = hours * config.hourlyRate;
+  const minimumLaborCost = minLaborHours * config.hourlyRate;
+  const laborCost = Math.max(calculatedLaborCost, minimumLaborCost);
+  const laborMinimumApplied = laborCost > calculatedLaborCost;
+
+  console.log(`Labor cost: calculated=${calculatedLaborCost}, minimum=${minimumLaborCost}, final=${laborCost}, minimumApplied=${laborMinimumApplied}`);
   
   // Vehicle cost proportional to hours
-  const vehicleCost = hours * VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle;
+  const vehicleCost = hours * config.serviceVehicleRate;
   
   // Use AI-calculated material cost if available, otherwise fallback to config
   let materialCost;
+  let materialSource = 'fallback';
   if (materialData?.total_cost && materialData.total_cost > 0) {
     materialCost = materialData.total_cost;
+    materialSource = 'ai';
     console.log(`Using AI material cost: ${materialCost} DKK`);
   } else {
-    const unitMaterialCost = VALENTIN_PRICING_LOGIC.materialCostPerType[projectType as keyof typeof VALENTIN_PRICING_LOGIC.materialCostPerType] || 500;
-    let baseMaterialCost = unitMaterialCost * size;
-    
-    // Apply size discount
-    const discount = getSizeDiscount(size);
-    materialCost = baseMaterialCost * (1 - discount);
+    const unitMaterialCost = profile.materialCostPerUnit || 500;
+    materialCost = unitMaterialCost * size;
     console.log(`Using fallback material cost: ${materialCost} DKK`);
   }
 
-  // Apply minimum only to labor cost (not materials)
-  const minimumLaborCost = VALENTIN_PRICING_LOGIC.baseRates.minimumProject / 2; // Half of project minimum
-  const adjustedLaborCost = Math.max(laborCost, minimumLaborCost);
-  const minimumApplied = adjustedLaborCost > laborCost;
-  
-  const subtotal = adjustedLaborCost + vehicleCost + materialCost;
-  const vat = subtotal * 0.25;
+  // Calculate subtotal before project minimum
+  let subtotal = laborCost + vehicleCost + materialCost;
+  let projectMinimumApplied = false;
+
+  // Apply project minimum only for specific project types (e.g., service_call)
+  if (applyMinimumProject && subtotal < config.minimumProject) {
+    console.log(`Applying project minimum: ${config.minimumProject} (was ${subtotal})`);
+    subtotal = config.minimumProject;
+    projectMinimumApplied = true;
+  }
+
+  const vat = subtotal * config.vatRate;
   const total = subtotal + vat;
+
+  const breakdown = [
+    { 
+      description: `${projectType.replace(/_/g, ' ')} arbejde (${hours.toFixed(1)} timer)`, 
+      amount: laborCost, 
+      calculation: laborMinimumApplied 
+        ? `${minLaborHours} timer minimum × ${config.hourlyRate} kr (beregnet: ${hours.toFixed(1)} timer)`
+        : `${hours.toFixed(1)} × ${config.hourlyRate} kr`
+    },
+    { 
+      description: `Servicevogn (${hours.toFixed(1)} timer)`, 
+      amount: vehicleCost, 
+      calculation: `${hours.toFixed(1)} × ${config.serviceVehicleRate} kr/time` 
+    },
+    { 
+      description: `Materialer (${size} ${analysis.project.size_unit || 'm2'})`, 
+      amount: materialCost, 
+      calculation: materialSource === 'ai' ? 'AI-beregnet materialepris' : 'Standard materialepris'
+    }
+  ];
+
+  // Add project minimum line if applied
+  if (projectMinimumApplied) {
+    const minimumAdjustment = config.minimumProject - (laborCost + vehicleCost + materialCost);
+    breakdown.push({
+      description: 'Projektminimum tillæg',
+      amount: minimumAdjustment,
+      calculation: `Samlet minimum: ${config.minimumProject} kr`
+    });
+  }
 
   return {
     laborHours: hours,
-    laborCost: adjustedLaborCost,
+    laborCost,
     vehicleCost,
     materialCost,
     subtotal,
@@ -409,36 +475,24 @@ function calculateProjectPrice(analysis: any, materialData?: any, historicalData
       complexityMultiplier,
       referenceSize: averageSize,
       actualSize: size,
-      minimumApplied,
-      vehicleCostType: 'hourly'
+      laborMinimumApplied,
+      projectMinimumApplied,
+      minLaborHours,
+      vehicleCostType: 'hourly',
+      materialSource
     },
-    breakdown: [
-      { 
-        description: `${projectType.replace('_', ' ')} arbejde (${hours.toFixed(1)} timer)`, 
-        amount: adjustedLaborCost, 
-        calculation: `${hours.toFixed(1)} × ${VALENTIN_PRICING_LOGIC.baseRates.hourlyRate} kr${minimumApplied ? ' (minimum anvendt)' : ''}` 
-      },
-      { 
-        description: `Servicevogn (${hours.toFixed(1)} timer)`, 
-        amount: vehicleCost, 
-        calculation: `${hours.toFixed(1)} × ${VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle} kr/time` 
-      },
-      { 
-        description: `Materialer (${size} ${config.unit})`, 
-        amount: materialCost, 
-        calculation: materialData?.total_cost ? 'AI-beregnet materialepris' : 'Standard materialepris'
-      }
-    ]
+    breakdown
   };
 }
 
-function createFallbackPrice() {
+function createFallbackPrice(pricingConfig?: any, pricingProfiles?: any) {
+  const config = pricingConfig || FALLBACK_CONFIG;
   const hours = 4;
-  const laborCost = hours * VALENTIN_PRICING_LOGIC.baseRates.hourlyRate;
-  const vehicleCost = hours * VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle;
+  const laborCost = hours * config.hourlyRate;
+  const vehicleCost = hours * config.serviceVehicleRate;
   const materialCost = 2000;
   const subtotal = laborCost + vehicleCost + materialCost;
-  const vat = subtotal * 0.25;
+  const vat = subtotal * config.vatRate;
 
   return {
     laborHours: hours,
@@ -448,26 +502,16 @@ function createFallbackPrice() {
     subtotal,
     vat,
     total: subtotal + vat,
-    calibrationFactors: {
-      beta: 1.0,
-      historicalFactor: 1.0,
-      complexityMultiplier: 1.0,
-      referenceSize: 1,
-      actualSize: 1,
-      minimumApplied: false,
-      vehicleCostType: 'hourly'
-    },
     breakdown: [
-      { description: `Standard VVS arbejde (${hours} timer)`, amount: laborCost, calculation: `${hours} × ${VALENTIN_PRICING_LOGIC.baseRates.hourlyRate} kr` },
-      { description: `Servicevogn (${hours} timer)`, amount: vehicleCost, calculation: `${hours} × ${VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle} kr/time` },
-      { description: `Standard materialer`, amount: materialCost, calculation: `Estimat` }
+      { description: 'Arbejde (estimeret)', amount: laborCost, calculation: `${hours} × ${config.hourlyRate} kr` },
+      { description: 'Servicevogn', amount: vehicleCost, calculation: `${hours} × ${config.serviceVehicleRate} kr` },
+      { description: 'Materialer (estimeret)', amount: materialCost, calculation: 'Standard estimat' }
     ]
   };
 }
 
 function getSizeDiscount(size: number): number {
-  const d = VALENTIN_PRICING_LOGIC.sizeDiscounts;
-  if (size >= d.large.threshold) return d.large.discount;
-  if (size >= d.medium.threshold) return d.medium.discount;
-  return d.small.discount;
+  if (size >= 150) return 0.2;
+  if (size >= 50) return 0.1;
+  return 0;
 }

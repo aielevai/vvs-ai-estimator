@@ -14,6 +14,8 @@ export const VALENTIN_PRICING_LOGIC = {
       sizeRange: [6, 20],
       minHours: 4,
       maxHours: 200,
+      minLaborHours: 6,
+      applyMinimumProject: false,
       beta: 1.0 // Scaling exponent, can be calibrated by historical data
     },
     kitchen_plumbing: { 
@@ -23,6 +25,8 @@ export const VALENTIN_PRICING_LOGIC = {
       sizeRange: [4, 15],
       minHours: 3,
       maxHours: 100,
+      minLaborHours: 4,
+      applyMinimumProject: false,
       beta: 1.0
     },
     pipe_installation: { 
@@ -32,6 +36,8 @@ export const VALENTIN_PRICING_LOGIC = {
       sizeRange: [5, 50],
       minHours: 2,
       maxHours: 150,
+      minLaborHours: 3,
+      applyMinimumProject: false,
       beta: 1.0
     },
     district_heating: { 
@@ -41,6 +47,8 @@ export const VALENTIN_PRICING_LOGIC = {
       additionalPerUnit: 0.5,
       minHours: 8,
       maxHours: 40,
+      minLaborHours: 8,
+      applyMinimumProject: false,
       beta: 1.0
     },
     floor_heating: { 
@@ -50,6 +58,8 @@ export const VALENTIN_PRICING_LOGIC = {
       sizeRange: [20, 150],
       minHours: 4,
       maxHours: 200,
+      minLaborHours: 4,
+      applyMinimumProject: false,
       beta: 1.0
     },
     radiator_installation: { 
@@ -59,6 +69,8 @@ export const VALENTIN_PRICING_LOGIC = {
       sizeRange: [1, 10],
       minHours: 2,
       maxHours: 80,
+      minLaborHours: 3,
+      applyMinimumProject: false,
       beta: 1.0
     },
     service_call: { 
@@ -67,6 +79,8 @@ export const VALENTIN_PRICING_LOGIC = {
       averageSize: 1,
       minHours: 2,
       maxHours: 50,
+      minLaborHours: 2,
+      applyMinimumProject: true,
       beta: 1.0
     }
   },

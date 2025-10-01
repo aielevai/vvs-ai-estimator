@@ -8,6 +8,7 @@ import { formatCurrency, formatDate, VALENTIN_PRICING_LOGIC } from "@/lib/valent
 import { db } from "@/lib/supabase-client";
 import { Send, CheckCircle, FileText, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { usePricingConfig } from "@/hooks/usePricingConfig";
 
 interface QuoteViewerProps {
   quote: Quote;
@@ -17,6 +18,7 @@ interface QuoteViewerProps {
 export default function QuoteViewer({ quote, onUpdate }: QuoteViewerProps) {
   const [sending, setSending] = useState(false);
   const { toast } = useToast();
+  const { config: pricingConfig } = usePricingConfig();
 
   const handleApproveAndSend = async () => {
     setSending(true);
@@ -96,8 +98,8 @@ export default function QuoteViewer({ quote, onUpdate }: QuoteViewerProps) {
             <h4 className="font-medium mb-2">Arbejdstimer</h4>
             <div className="text-sm space-y-1">
               <div><span className="font-medium">Samlet timer:</span> {quote.labor_hours.toFixed(1)} timer</div>
-              <div><span className="font-medium">Timepris:</span> {formatCurrency(VALENTIN_PRICING_LOGIC.baseRates.hourlyRate)}</div>
-              <div><span className="font-medium">Servicevogn:</span> {formatCurrency(VALENTIN_PRICING_LOGIC.baseRates.serviceVehicle)}/time</div>
+              <div><span className="font-medium">Timepris:</span> {formatCurrency(pricingConfig.hourlyRate)}</div>
+              <div><span className="font-medium">Servicevogn:</span> {formatCurrency(pricingConfig.serviceVehicleRate)}/time</div>
             </div>
           </div>
         </div>

@@ -350,6 +350,90 @@ export type Database = {
         }
         Relationships: []
       }
+      pricing_config: {
+        Row: {
+          created_at: string
+          effective_from: string
+          hourly_rate: number
+          id: string
+          minimum_project: number
+          service_vehicle_rate: number
+          updated_at: string
+          vat_rate: number
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          effective_from?: string
+          hourly_rate?: number
+          id?: string
+          minimum_project?: number
+          service_vehicle_rate?: number
+          updated_at?: string
+          vat_rate?: number
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          effective_from?: string
+          hourly_rate?: number
+          id?: string
+          minimum_project?: number
+          service_vehicle_rate?: number
+          updated_at?: string
+          vat_rate?: number
+          version?: number
+        }
+        Relationships: []
+      }
+      pricing_profiles: {
+        Row: {
+          apply_minimum_project: boolean
+          average_size: number
+          base_hours: number
+          beta_default: number
+          created_at: string
+          id: string
+          material_cost_per_unit: number | null
+          max_hours: number
+          min_hours: number
+          min_labor_hours: number
+          project_type: string
+          size_unit: string
+          updated_at: string
+        }
+        Insert: {
+          apply_minimum_project?: boolean
+          average_size: number
+          base_hours: number
+          beta_default?: number
+          created_at?: string
+          id?: string
+          material_cost_per_unit?: number | null
+          max_hours: number
+          min_hours: number
+          min_labor_hours: number
+          project_type: string
+          size_unit: string
+          updated_at?: string
+        }
+        Update: {
+          apply_minimum_project?: boolean
+          average_size?: number
+          base_hours?: number
+          beta_default?: number
+          created_at?: string
+          id?: string
+          material_cost_per_unit?: number | null
+          max_hours?: number
+          min_hours?: number
+          min_labor_hours?: number
+          project_type?: string
+          size_unit?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       project_intelligence: {
         Row: {
           bom_suggestions: Json | null
