@@ -6,33 +6,29 @@
 
 @layer base {
   :root {
-    /* Core brand colors - VVS professional blue/teal theme */
-    --background: 0 0% 100%;
-    --foreground: 210 15% 15%;
-
+    /* Apple-Inspired Modern Design System */
+    --background: 0 0% 96%;  /* #f5f5f5 */
+    --foreground: 210 30% 25%;
+    
     --card: 0 0% 100%;
-    --card-foreground: 210 15% 15%;
-
+    --card-foreground: 210 30% 25%;
+    
     --popover: 0 0% 100%;
-    --popover-foreground: 210 15% 15%;
-
-    /* Primary - Professional VVS blue */
-    --primary: 200 85% 35%;
-    --primary-foreground: 0 0% 98%;
-    --primary-hover: 200 85% 30%;
-
-    /* Secondary - Light blue accent */
-    --secondary: 195 30% 95%;
-    --secondary-foreground: 200 85% 20%;
-
-    --muted: 210 20% 96%;
-    --muted-foreground: 210 15% 55%;
-
-    /* Accent - Teal for highlights */
-    --accent: 180 70% 40%;
-    --accent-foreground: 0 0% 98%;
-
-    /* Status colors */
+    --popover-foreground: 210 30% 25%;
+    
+    --primary: 210 42% 31%;  /* #374c63 - Dark blue */
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 210 42% 26%;
+    
+    --secondary: 25 85% 60%;  /* #ee913f - Orange */
+    --secondary-foreground: 0 0% 100%;
+    
+    --muted: 210 15% 95%;
+    --muted-foreground: 210 20% 45%;
+    
+    --accent: 25 85% 60%;  /* #ee913f */
+    --accent-foreground: 0 0% 100%;
+    
     --success: 145 70% 40%;
     --success-foreground: 0 0% 98%;
     
@@ -40,32 +36,22 @@
     --warning-foreground: 0 0% 98%;
 
     --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive-foreground: 0 0% 98%;
 
-    --border: 210 20% 90%;
-    --input: 210 20% 92%;
-    --ring: 200 85% 35%;
+    --border: 210 15% 88%;
+    --input: 210 15% 88%;
+    --ring: 210 42% 31%;
 
-    /* VVS specific colors */
-    --vvs-blue: 200 85% 35%;
-    --vvs-teal: 180 70% 40%;
-    --vvs-gray: 210 15% 50%;
-    --vvs-light: 195 30% 98%;
-
-    /* Gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
-    --gradient-hero: linear-gradient(135deg, hsl(200 85% 40%), hsl(180 70% 45%));
-    --gradient-card: linear-gradient(180deg, hsl(var(--background)), hsl(195 30% 99%));
-
-    /* Shadows */
-    --shadow-elegant: 0 8px 30px -8px hsl(var(--primary) / 0.15);
-    --shadow-card: 0 4px 20px -4px hsl(210 15% 15% / 0.08);
-    --shadow-button: 0 2px 8px -2px hsl(var(--primary) / 0.2);
-
-    /* Radius and spacing */
+    /* Apple-style design tokens */
     --radius: 0.75rem;
     --radius-lg: 1rem;
     --radius-xl: 1.5rem;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+    --shadow-elegant: 0 8px 30px -8px rgb(55 76 99 / 0.15);
 
     /* Transitions */
     --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -73,50 +59,35 @@
   }
 
   .dark {
-    /* Dark mode - Professional dark VVS theme */
-    --background: 210 25% 8%;
-    --foreground: 195 30% 95%;
-
-    --card: 210 25% 10%;
-    --card-foreground: 195 30% 95%;
-
-    --popover: 210 25% 10%;
-    --popover-foreground: 195 30% 95%;
-
-    --primary: 200 85% 50%;
-    --primary-foreground: 210 25% 8%;
-    --primary-hover: 200 85% 45%;
-
-    --secondary: 210 25% 15%;
-    --secondary-foreground: 195 30% 90%;
-
-    --muted: 210 25% 12%;
-    --muted-foreground: 210 15% 65%;
-
-    --accent: 180 70% 50%;
-    --accent-foreground: 210 25% 8%;
-
+    --background: 210 30% 8%;
+    --foreground: 210 15% 90%;
+    
+    --card: 210 25% 12%;
+    --card-foreground: 210 15% 90%;
+    
+    --popover: 210 25% 12%;
+    --popover-foreground: 210 15% 90%;
+    
+    --primary: 210 42% 45%;
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 210 42% 40%;
+    
+    --secondary: 25 85% 55%;
+    --secondary-foreground: 0 0% 100%;
+    
+    --muted: 210 25% 18%;
+    --muted-foreground: 210 15% 60%;
+    
+    --accent: 25 85% 55%;
+    --accent-foreground: 0 0% 100%;
+    
     --success: 145 70% 50%;
     --warning: 35 85% 60%;
     --destructive: 0 84.2% 70%;
-
+    
     --border: 210 25% 20%;
     --input: 210 25% 15%;
-    --ring: 200 85% 50%;
-
-    --vvs-blue: 200 85% 50%;
-    --vvs-teal: 180 70% 50%;
-    --vvs-gray: 210 15% 60%;
-    --vvs-light: 210 25% 12%;
-
-    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
-    --gradient-hero: linear-gradient(135deg, hsl(200 85% 50%), hsl(180 70% 55%));
-    --gradient-card: linear-gradient(180deg, hsl(var(--card)), hsl(210 25% 12%));
-
-    --shadow-elegant: 0 8px 30px -8px hsl(0 0% 0% / 0.3);
-    --shadow-card: 0 4px 20px -4px hsl(0 0% 0% / 0.2);
-    --shadow-button: 0 2px 8px -2px hsl(var(--primary) / 0.3);
-
+    --ring: 210 42% 45%;
   }
 }
 
@@ -126,34 +97,30 @@
   }
 
   body {
-    @apply bg-background text-foreground font-sans;
+    @apply bg-background text-foreground;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   h1, h2, h3, h4, h5, h6 {
     @apply font-semibold text-foreground;
+    letter-spacing: -0.02em;
   }
 
-  /* Custom VVS component styles */
+  /* Modern Apple-style components */
   .vvs-card {
-    @apply bg-card rounded-lg border border-border shadow-sm;
-    background: var(--gradient-card);
-    box-shadow: var(--shadow-card);
+    @apply bg-card rounded-[var(--radius-lg)] border border-border shadow-md hover:shadow-lg transition-all duration-300;
   }
 
   .vvs-button-primary {
-    @apply bg-primary text-primary-foreground;
-    background: var(--gradient-primary);
-    box-shadow: var(--shadow-button);
+    @apply bg-secondary text-secondary-foreground hover:opacity-90 font-medium rounded-lg px-6 py-2.5 shadow-sm hover:shadow-md;
     transition: var(--transition-smooth);
   }
 
-  .vvs-button-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-elegant);
-  }
-
   .vvs-header {
-    background: var(--gradient-hero);
+    @apply bg-primary text-primary-foreground;
     box-shadow: var(--shadow-elegant);
   }
 
@@ -162,7 +129,7 @@
   }
 
   .vvs-status-analyzed {
-    @apply bg-amber-100 text-amber-800 border-amber-200;
+    @apply bg-purple-100 text-purple-800 border-purple-200;
   }
 
   .vvs-status-quoted {
@@ -196,10 +163,16 @@
   }
 
   .vvs-input {
-    @apply border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 rounded-md;
+    @apply border border-input bg-background px-3 py-2 text-sm ring-offset-background rounded-md;
+    @apply placeholder:text-muted-foreground;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+    @apply disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .vvs-button {
-    @apply inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium;
+    @apply ring-offset-background transition-colors;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+    @apply disabled:pointer-events-none disabled:opacity-50;
   }
 }

@@ -148,6 +148,29 @@ serve(async (req) => {
       historicalCalibration: historicalData ? 'applied' : 'not_available'
     }, null, 2));
 
+    // Check for existing quotes to prevent duplicates
+    const { data: existingQuotes, error: checkError } = await supabase
+      .from('quotes')
+      .select('id, status')
+      .eq('case_id', caseId)
+      .in('status', ['draft', 'sent']);
+
+    if (checkError) {
+      console.error('Error checking for existing quotes:', checkError);
+    }
+
+    if (existingQuotes && existingQuotes.length > 0) {
+      console.log(`Quote already exists for case ${caseId}, skipping creation`);
+      return new Response(
+        JSON.stringify({ 
+          error: 'Quote already exists',
+          message: 'Der findes allerede et tilbud for denne sag',
+          existing_quote_id: existingQuotes[0].id
+        }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Create quote
     const { data: quote, error: quoteError } = await supabase
       .from('quotes')
