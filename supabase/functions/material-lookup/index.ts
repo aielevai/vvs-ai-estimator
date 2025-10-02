@@ -7,6 +7,25 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Fix encoding issues in text
+function fixEncoding(text: string): string {
+  if (!text) return '';
+  
+  const map: Record<string, string> = {
+    'Ã¦': 'æ', 'Ã˜': 'Ø', 'Ã¸': 'ø', 'Ã…': 'Å', 'Ã¥': 'å',
+    'Ã†': 'Æ', 'Â²': '²', 'Â°': '°', 'Â½': '½', 'Â¼': '¼', 'Â¾': '¾',
+    'adevÃ¦relse': 'badeværelse', 'pÃ¥': 'på', 'mÂ²': 'm²',
+    'r�dgods': 'rødgods', 'rÃ¸r': 'rør', 'kÃ¸kken': 'køkken',
+    '�': '' // Remove replacement character entirely
+  };
+  
+  let fixed = text;
+  for (const [garbled, correct] of Object.entries(map)) {
+    fixed = fixed.replaceAll(garbled, correct);
+  }
+  return fixed;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -199,29 +218,44 @@ function getSearchTermsForProject(projectType: string, materialeAnalyse?: any): 
 }
 
 function createMaterialSelectionPrompt(projectType: string, description: string, size: number, complexity: string, materialeAnalyse: any, products: any[]): string {
-  // Much shorter, focused prompt optimized for GPT-5
-  const topProducts = products.slice(0, 30); // Further reduced for stability
+  const topProducts = products.slice(0, 30);
   
-  // Build specific component list from materiale_analyse
   let componentFocus = '';
   if (materialeAnalyse?.specifikke_komponenter) {
-    const topComponents = materialeAnalyse.specifikke_komponenter.slice(0, 5);
-    componentFocus = `\nNødvendige komponenter:\n${topComponents.map((c: any) => 
-      `- ${c.komponent}: ${c.mængde} ${c.enhed}`
+    const topComponents = materialeAnalyse.specifikke_komponenter.slice(0, 8);
+    componentFocus = `\nKOMPONENTER NØDVENDIGE (brug størrelse ${size} ${getSizeUnit(projectType)} til beregning):\n${topComponents.map((c: any) => 
+      `- ${c.komponent}: ${c.mængde || '?'} ${c.enhed || 'stk'} | ${c.specifikationer || ''}`
     ).join('\n')}`;
   }
   
-  return `Projekt: ${projectType} (${size} ${getSizeUnit(projectType)})${componentFocus}
+  return `Du skal vælge materialer til: ${projectType} (${size} ${getSizeUnit(projectType)})
 
-Produkter:
+TILGÆNGELIGE PRODUKTER (vælg KUN fra denne liste):
 ${topProducts.map((p, i) => 
-  `${i+1}. ${p.supplier_item_id}: ${p.short_description?.substring(0, 50) || 'N/A'} - ${p.net_price}kr`
+  `${i+1}. ID:${p.supplier_item_id} | ${fixEncoding(p.short_description || 'N/A').substring(0, 60)} | Pris:${p.net_price}kr/${p.price_unit || 'stk'}`
 ).join('\n')}
+${componentFocus}
 
-Returner JSON array:
-{"materials":[{"supplier_item_id":"ID","description":"navn","quantity":1,"unit_price":100,"unit":"stk","total_price":100}]}
+RETURNER KUN DETTE JSON-FORMAT (ingen tekst før eller efter):
+{
+  "materials": [
+    {
+      "supplier_item_id": "123456",
+      "description": "Produkt navn",
+      "quantity": 10,
+      "unit": "stk",
+      "unit_price": 100,
+      "total_price": 1000
+    }
+  ],
+  "reasoning": "Kort forklaring"
+}
 
-Vælg 5-10 nødvendige produkter fra listen.`;
+VIGTIGE REGLER:
+- Beregn quantity korrekt baseret på ${size} ${getSizeUnit(projectType)}
+- Brug ALTID supplier_item_id fra produktlisten ovenfor
+- Brug de faktiske net_price værdier fra listen
+- RETURNER KUN JSON - ingen markdown, ingen forklaring før/efter`;
 }
 
 function getSizeUnit(projectType: string): string {
@@ -281,6 +315,7 @@ function validateAndEnhanceMaterials(aiMaterials: any, products: any[], projectT
     if (matchingProduct) {
       return {
         ...material,
+        description: fixEncoding(material.description || matchingProduct.short_description || ''),
         unit_price: matchingProduct.net_price || matchingProduct.gross_price || material.unit_price,
         total_price: material.quantity * (matchingProduct.net_price || matchingProduct.gross_price || material.unit_price),
         supplier_id: 'ahlsell',
@@ -296,6 +331,7 @@ function validateAndEnhanceMaterials(aiMaterials: any, products: any[], projectT
       // Product not found, use AI suggestion but mark as unvalidated
       return {
         ...material,
+        description: fixEncoding(material.description || ''),
         validated: false,
         supplier_id: 'unknown',
         warning: 'Produkt ikke fundet i Ahlsell database - pris er estimeret'
@@ -326,29 +362,143 @@ function validateAndEnhanceMaterials(aiMaterials: any, products: any[], projectT
 }
 
 async function searchDatabaseDirectly(supabase: any, projectType: string, materialeAnalyse: any, estimatedSize: number, products: any[]): Promise<any> {
-  console.log('Direct database search for materials');
+  console.log('Intelligent database search for materials with project-specific quantities');
   
-  // Use top matching products directly
-  const selectedProducts = products.slice(0, 15).map(p => ({
-    supplier_item_id: p.supplier_item_id,
-    description: p.short_description || p.long_description || 'Material',
-    quantity: Math.ceil(estimatedSize / 5), // Simple heuristic
-    unit_price: p.net_price || p.gross_price || 100,
-    unit: p.price_unit || 'stk',
-    total_price: Math.ceil(estimatedSize / 5) * (p.net_price || p.gross_price || 100),
-    validated: true,
-    supplier_id: 'ahlsell',
-    product_id: p.id,
-    in_stock: p.is_on_stock
-  }));
+  // Try to use specifikke_komponenter from AI analysis first
+  if (materialeAnalyse?.specifikke_komponenter && Array.isArray(materialeAnalyse.specifikke_komponenter)) {
+    console.log(`Using ${materialeAnalyse.specifikke_komponenter.length} specific components from AI analysis`);
+    
+    const selectedMaterials: any[] = [];
+    
+    for (const comp of materialeAnalyse.specifikke_komponenter) {
+      // Search for matching product
+      const searchTerms = comp.komponent.toLowerCase().split(/[\s,()/-]+/).filter((t: string) => t.length > 2);
+      
+      const matching = products.find(p => {
+        const desc = fixEncoding((p.short_description || p.long_description || '').toLowerCase());
+        return searchTerms.some(term => desc.includes(term));
+      });
+      
+      if (matching) {
+        selectedMaterials.push({
+          supplier_item_id: matching.supplier_item_id,
+          description: fixEncoding(matching.short_description || matching.long_description || comp.komponent),
+          quantity: comp.mængde || 1,
+          unit_price: matching.net_price || matching.gross_price || 100,
+          unit: comp.enhed || matching.price_unit || 'stk',
+          total_price: (comp.mængde || 1) * (matching.net_price || matching.gross_price || 100),
+          validated: true,
+          supplier_id: 'ahlsell',
+          product_id: matching.id,
+          in_stock: matching.is_on_stock
+        });
+      }
+    }
+    
+    if (selectedMaterials.length > 0) {
+      const totalCost = selectedMaterials.reduce((sum, m) => sum + m.total_price, 0);
+      return {
+        materials: selectedMaterials,
+        total_cost: totalCost,
+        mode: 'ai_components_mapped',
+        ai_reasoning: 'Bruger AI\'s specifikke komponenter med database-mapping'
+      };
+    }
+  }
   
-  const totalCost = selectedProducts.reduce((sum, m) => sum + m.total_price, 0);
+  // Fallback: Use intelligent project-type based rules
+  console.log('Using project-type based material rules');
+  return calculateMaterialsByProjectType(projectType, estimatedSize, products);
+}
+
+function calculateMaterialsByProjectType(projectType: string, size: number, products: any[]): any {
+  console.log(`Calculating materials for ${projectType} with size ${size}`);
+  
+  // Project-specific material rules with intelligent quantities
+  const projectRules: Record<string, Array<{search: string, quantityCalc: (size: number) => number, unit: string, priority: number}>> = {
+    'bathroom_renovation': [
+      { search: 'toilet', quantityCalc: () => 1, unit: 'stk', priority: 1 },
+      { search: 'håndvask', quantityCalc: () => 1, unit: 'stk', priority: 1 },
+      { search: 'vask', quantityCalc: () => 1, unit: 'stk', priority: 2 },
+      { search: 'brusekabine', quantityCalc: () => 1, unit: 'stk', priority: 1 },
+      { search: 'bruser', quantityCalc: () => 1, unit: 'stk', priority: 2 },
+      { search: 'pex 16', quantityCalc: (s) => Math.ceil(s * 8), unit: 'meter', priority: 1 },
+      { search: 'gulvafløb', quantityCalc: () => 1, unit: 'stk', priority: 1 },
+      { search: 'ventil', quantityCalc: (s) => Math.max(5, Math.ceil(s / 2)), unit: 'stk', priority: 1 },
+      { search: 'armatur', quantityCalc: () => 2, unit: 'stk', priority: 1 }
+    ],
+    'floor_heating': [
+      { search: 'pex 16', quantityCalc: (s) => Math.ceil(s * 8), unit: 'meter', priority: 1 },
+      { search: 'gulvvarme', quantityCalc: (s) => Math.ceil(s * 8), unit: 'meter', priority: 2 },
+      { search: 'fordeler', quantityCalc: (s) => Math.ceil(s / 15), unit: 'stk', priority: 1 },
+      { search: 'termostat', quantityCalc: (s) => Math.ceil(s / 20), unit: 'stk', priority: 1 }
+    ],
+    'radiator_installation': [
+      { search: 'radiator', quantityCalc: (s) => Math.max(1, Math.ceil(s / 3)), unit: 'stk', priority: 1 },
+      { search: 'ventil', quantityCalc: (s) => Math.max(2, Math.ceil(s / 3) * 2), unit: 'stk', priority: 1 },
+      { search: 'termostat', quantityCalc: (s) => Math.max(1, Math.ceil(s / 3)), unit: 'stk', priority: 1 }
+    ],
+    'kitchen_plumbing': [
+      { search: 'køkkenvask', quantityCalc: () => 1, unit: 'stk', priority: 1 },
+      { search: 'armatur', quantityCalc: () => 1, unit: 'stk', priority: 1 },
+      { search: 'ventil', quantityCalc: () => 3, unit: 'stk', priority: 1 },
+      { search: 'sifon', quantityCalc: () => 1, unit: 'stk', priority: 1 }
+    ]
+  };
+  
+  const rules = projectRules[projectType] || [];
+  const selectedMaterials: any[] = [];
+  const usedSearchTerms = new Set<string>();
+  
+  for (const rule of rules) {
+    // Find best matching product that hasn't been used yet
+    const matching = products.find(p => {
+      const desc = fixEncoding((p.short_description || '').toLowerCase());
+      const longDesc = fixEncoding((p.long_description || '').toLowerCase());
+      const matchesSearch = desc.includes(rule.search.toLowerCase()) || longDesc.includes(rule.search.toLowerCase());
+      const notUsed = !usedSearchTerms.has(p.supplier_item_id);
+      return matchesSearch && notUsed;
+    });
+    
+    if (matching) {
+      usedSearchTerms.add(matching.supplier_item_id);
+      const quantity = rule.quantityCalc(size);
+      
+      selectedMaterials.push({
+        supplier_item_id: matching.supplier_item_id,
+        description: fixEncoding(matching.short_description || matching.long_description || rule.search),
+        quantity: quantity,
+        unit_price: matching.net_price || matching.gross_price || 100,
+        unit: rule.unit,
+        total_price: quantity * (matching.net_price || matching.gross_price || 100),
+        validated: true,
+        supplier_id: 'ahlsell',
+        product_id: matching.id,
+        in_stock: matching.is_on_stock
+      });
+    }
+  }
+  
+  // If no materials found, add generic fallback
+  if (selectedMaterials.length === 0) {
+    selectedMaterials.push({
+      supplier_item_id: products[0]?.supplier_item_id || 'UNKNOWN',
+      description: fixEncoding(products[0]?.short_description || 'Standard materialer'),
+      quantity: Math.max(1, Math.ceil(size / 5)),
+      unit_price: products[0]?.net_price || 150,
+      unit: 'stk',
+      total_price: Math.max(1, Math.ceil(size / 5)) * (products[0]?.net_price || 150),
+      validated: false
+    });
+  }
+  
+  const totalCost = selectedMaterials.reduce((sum, m) => sum + m.total_price, 0);
   
   return {
-    materials: selectedProducts,
+    materials: selectedMaterials,
     total_cost: totalCost,
-    mode: 'database_direct',
-    ai_reasoning: 'Direkte database søgning - AI parsering fejlede'
+    mode: 'project_type_rules',
+    ai_reasoning: `Intelligent materialeberegning for ${projectType} baseret på ${size} ${getSizeUnit(projectType)}`
   };
 }
 

@@ -21,6 +21,8 @@ export interface ParsedProduct {
 
 // Fix encoding issues - convert common garbled Danish characters
 const fixEncoding = (text: string): string => {
+  if (!text) return '';
+  
   const encodingMap: Record<string, string> = {
     'Ã¦': 'æ',
     'Ã˜': 'Ø',
@@ -28,8 +30,9 @@ const fixEncoding = (text: string): string => {
     'Ã…': 'Å',
     'Ã¥': 'å',
     'Ã†': 'Æ',
-    'Ã': 'Å', // Alternative encoding
+    'Ã': 'Å',
     'Â°': '°',
+    'Â²': '²',
     'Â½': '½',
     'Â¼': '¼',
     'Â¾': '¾',
@@ -38,12 +41,18 @@ const fixEncoding = (text: string): string => {
     'â€': '"',
     'â€™': "'",
     'â€˜': "'",
+    'adevÃ¦relse': 'badeværelse',
+    'pÃ¥': 'på',
+    'mÂ²': 'm²',
+    'r�dgods': 'rødgods',
+    'rÃ¸r': 'rør',
+    'kÃ¸kken': 'køkken',
     '�': '', // Remove replacement characters
   };
 
   let fixed = text;
   for (const [garbled, correct] of Object.entries(encodingMap)) {
-    fixed = fixed.replace(new RegExp(garbled, 'g'), correct);
+    fixed = fixed.replace(new RegExp(garbled.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), correct);
   }
   return fixed;
 };

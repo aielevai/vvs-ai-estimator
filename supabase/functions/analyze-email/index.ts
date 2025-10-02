@@ -6,6 +6,25 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Fix encoding issues in email text
+function fixEncoding(text: string): string {
+  if (!text) return '';
+  
+  const map: Record<string, string> = {
+    'Ã¦': 'æ', 'Ã˜': 'Ø', 'Ã¸': 'ø', 'Ã…': 'Å', 'Ã¥': 'å',
+    'Ã†': 'Æ', 'Â²': '²', 'Â°': '°', 'Â½': '½', 'Â¼': '¼', 'Â¾': '¾',
+    'adevÃ¦relse': 'badeværelse', 'pÃ¥': 'på', 'mÂ²': 'm²',
+    'r�dgods': 'rødgods', 'rÃ¸r': 'rør', 'kÃ¸kken': 'køkken',
+    '�': '' // Remove replacement character
+  };
+  
+  let fixed = text;
+  for (const [garbled, correct] of Object.entries(map)) {
+    fixed = fixed.replaceAll(garbled, correct);
+  }
+  return fixed;
+}
+
 const VALENTIN_AI_PROMPT = `Du er VVS-ekspert for Valentin VVS ApS og skal analysere kundeforespørgsler for at identificere specifikke materialer og komponenter.
 
 Analyser denne email grundigt og returner struktureret JSON med:
@@ -71,7 +90,11 @@ serve(async (req) => {
       throw new Error('OpenAI API key not configured');
     }
 
-    const content = `EMNE: ${subject || 'Ingen emne'}\nINDHOLD:\n${emailContent}`;
+    // Fix encoding in email content before sending to AI
+    const cleanSubject = fixEncoding(subject || 'Ingen emne');
+    const cleanContent = fixEncoding(emailContent);
+    
+    const content = `EMNE: ${cleanSubject}\nINDHOLD:\n${cleanContent}`;
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
