@@ -202,10 +202,11 @@ serve(async (req) => {
       if (analysis?.project) {
         const materialResponse = await supabase.functions.invoke('material-lookup', {
           body: { 
-            caseId,
             projectType: analysis.project.type,
-            description: analysis.project.description || caseData.description || '',
-            size: analysis.project.estimated_size
+            projectDescription: analysis.project.description || caseData.description || '',
+            estimatedSize: analysis.project.estimated_size,
+            complexity: analysis.project.complexity || 'medium',
+            materialeAnalyse: analysis.materiale_analyse
           }
         });
 
@@ -275,18 +276,68 @@ serve(async (req) => {
       );
     }
 
-    // Create quote lines
-    const quoteLines = priceBreakdown.breakdown.map((item: any, index: number) => ({
-      quote_id: quote.id,
-      line_type: item.description.includes('arbejde') ? 'labor' : 
-                 item.description.includes('vogn') ? 'service_vehicle' : 'material',
-      description: item.description,
-      quantity: 1,
-      unit_price: item.amount,
-      total_price: item.amount,
-      labor_hours: item.description.includes('arbejde') ? priceBreakdown.laborHours : null,
-      sort_order: index
-    }));
+    // Create quote lines - itemized materials if available
+    const quoteLines: any[] = [];
+    
+    // Add labor and vehicle lines
+    const laborLine = priceBreakdown.breakdown.find((b: any) => b.description.includes('arbejde'));
+    const vehicleLine = priceBreakdown.breakdown.find((b: any) => b.description.includes('Servicevogn'));
+    
+    if (laborLine) {
+      quoteLines.push({
+        quote_id: quote.id,
+        line_type: 'labor',
+        description: laborLine.description,
+        quantity: priceBreakdown.laborHours,
+        unit_price: pricingConfig?.hourly_rate || 595,
+        total_price: laborLine.amount,
+        sort_order: 0
+      });
+    }
+    
+    if (vehicleLine) {
+      quoteLines.push({
+        quote_id: quote.id,
+        line_type: 'vehicle',
+        description: vehicleLine.description,
+        quantity: priceBreakdown.laborHours,
+        unit_price: pricingConfig?.service_vehicle_rate || 65,
+        total_price: vehicleLine.amount,
+        sort_order: 1
+      });
+    }
+    
+    // Add itemized materials if available
+    if (materialData?.materials && Array.isArray(materialData.materials) && materialData.materials.length > 0) {
+      console.log(`Creating ${materialData.materials.length} itemized material lines`);
+      materialData.materials.forEach((material: any, index: number) => {
+        quoteLines.push({
+          quote_id: quote.id,
+          line_type: 'material',
+          description: material.description || material.short_description || 'Materiale',
+          material_code: material.supplier_item_id || material.vvs_number || material.product_code,
+          quantity: material.quantity || 1,
+          unit_price: material.unit_price || 0,
+          total_price: material.total_price || (material.unit_price * material.quantity),
+          sort_order: 2 + index
+        });
+      });
+    } else {
+      // No itemized materials - add single material line as fallback
+      console.log('No itemized materials available from lookup - using single material line');
+      const materialLine = priceBreakdown.breakdown.find((b: any) => b.description.includes('Materialer'));
+      if (materialLine) {
+        quoteLines.push({
+          quote_id: quote.id,
+          line_type: 'material',
+          description: materialLine.description,
+          quantity: 1,
+          unit_price: materialLine.amount,
+          total_price: materialLine.amount,
+          sort_order: 2
+        });
+      }
+    }
 
     const { error: linesError } = await supabase
       .from('quote_lines')

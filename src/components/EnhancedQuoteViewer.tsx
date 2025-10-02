@@ -150,13 +150,16 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ quote,
         <CardHeader>
           <CardTitle>Detaljeret Prisberegning</CardTitle>
           <CardDescription>
-            Transparent opdeling af alle omkostninger
+            {quote.quote_lines?.filter((l: any) => l.line_type === 'material').length > 0 
+              ? 'Transparent opdeling af alle omkostninger med itemiserede materialer'
+              : 'Transparent opdeling af alle omkostninger'}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {quote.quote_lines?.map((line: any, index: number) => (
-              <div key={line.id || index}>
+            {/* Labor and Vehicle Lines */}
+            {quote.quote_lines?.filter((line: any) => line.line_type !== 'material').map((line: any, index: number) => (
+              <div key={line.id || `non-mat-${index}`}>
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
@@ -164,16 +167,10 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ quote,
                       <Badge variant="outline">
                         {line.line_type}
                       </Badge>
-                      {line.material_code && (
-                        <Badge variant="secondary">
-                          {line.material_code}
-                        </Badge>
-                      )}
                     </div>
                     {line.quantity && (
                       <div className="text-sm text-muted-foreground mt-1">
                         {line.quantity} × {formatCurrency(line.unit_price || 0)}
-                        {line.labor_hours && ` (${line.labor_hours} timer)`}
                       </div>
                     )}
                   </div>
@@ -181,9 +178,45 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ quote,
                     <div className="font-medium">{formatCurrency(line.total_price || 0)}</div>
                   </div>
                 </div>
-                {index < (quote.quote_lines?.length || 0) - 1 && <Separator className="mt-4" />}
+                <Separator className="mt-4" />
               </div>
             ))}
+
+            {/* Material Lines Section */}
+            {quote.quote_lines?.filter((line: any) => line.line_type === 'material').length > 0 ? (
+              <div className="space-y-3">
+                <div className="text-sm font-medium text-muted-foreground">Materialer</div>
+                {quote.quote_lines?.filter((line: any) => line.line_type === 'material').map((line: any, index: number) => (
+                  <div key={line.id || `mat-${index}`} className="pl-4 border-l-2 border-muted">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{line.description}</span>
+                          {line.material_code && (
+                            <Badge variant="secondary" className="text-xs">
+                              {line.material_code}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {line.quantity} stk × {formatCurrency(line.unit_price || 0)}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-medium text-sm">{formatCurrency(line.total_price || 0)}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>
+                  Ingen itemiserede materialer tilgængelige. Materialeomkostninger er inkluderet som en samlet linje.
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
         </CardContent>
       </Card>

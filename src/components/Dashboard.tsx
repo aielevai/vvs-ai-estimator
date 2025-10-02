@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import CaseDetails from "./CaseDetails";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { MaterialImporter } from "./MaterialImporter";
 
 export default function Dashboard() {
   const [cases, setCases] = useState<Case[]>([]);
@@ -187,6 +188,11 @@ export default function Dashboard() {
               <div className="text-2xl font-bold text-emerald-600">{stats.approved}</div>
             </CardContent>
           </Card>
+        </div>
+
+        {/* Material Importer */}
+        <div className="mb-8">
+          <MaterialImporter />
         </div>
 
         <Card>
