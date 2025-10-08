@@ -7,6 +7,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// FASE 2: Import med unit price normalisering
+
 // Fix encoding issues - convert common garbled Danish characters
 const fixEncoding = (text: string): string => {
   const encodingMap: Record<string, string> = {
@@ -36,6 +38,47 @@ const fixEncoding = (text: string): string => {
   return fixed;
 };
 
+// Normaliser enhedspris
+function normalizeUnitPrice(p: any): number {
+  const base = Number(p.net_price ?? p.gross_price ?? 0);
+  const pq = Number(p.price_quantity ?? 1) || 1;
+  const of1 = Number(p.ordering_factor_1 ?? 1) || 1;
+  return base / (pq * of1);
+}
+
+// Simpel kategori-inferens baseret på beskrivelse
+function inferCategory(p: any): string {
+  const desc = (p.short_description || p.long_description || '').toLowerCase();
+  
+  if (desc.includes('toilet') || desc.includes('håndvask') || desc.includes('bruser')) return 'sanitær';
+  if (desc.includes('pex') || desc.includes('rør') || desc.includes('pipe')) return 'rør';
+  if (desc.includes('ventil') || desc.includes('valve')) return 'ventiler';
+  if (desc.includes('afløb') || desc.includes('drain')) return 'afløb';
+  if (desc.includes('membran') || desc.includes('tætning') || desc.includes('seal')) return 'tætning';
+  if (desc.includes('armatur') || desc.includes('faucet') || desc.includes('tap')) return 'armaturer';
+  if (desc.includes('radiator')) return 'radiator';
+  if (desc.includes('gulvvarme') || desc.includes('floor heating')) return 'gulvvarme';
+  if (desc.includes('fjernvarme') || desc.includes('district')) return 'fjernvarme';
+  if (desc.includes('isolering') || desc.includes('insulation')) return 'isolering';
+  if (desc.includes('fitting') || desc.includes('kobling')) return 'fittings';
+  if (desc.includes('klæb') || desc.includes('adhesive')) return 'tætning';
+  if (desc.includes('fuge') || desc.includes('joint')) return 'finish';
+  
+  return 'diverse';
+}
+
+// Byg normaliseret søgetekst
+function buildNormalizedText(p: any): string {
+  const parts = [
+    p.short_description,
+    p.long_description,
+    p.vvs_number,
+    p.ean_id,
+    p.supplier_item_id
+  ].filter(Boolean).join(' ').toLowerCase();
+  return parts.normalize("NFKD");
+}
+
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -54,14 +97,22 @@ serve(async (req) => {
 
     console.log(`Processing chunk ${chunkIndex}/${totalChunks} with ${products.length} products`);
 
-    // Fix encoding in all text fields
+    // Fix encoding in all text fields + add normalization
     const cleanProducts = products.map((product: any) => ({
       ...product,
       short_description: product.short_description ? fixEncoding(product.short_description) : null,
       long_description: product.long_description ? fixEncoding(product.long_description) : null,
-      normalized_text: product.normalized_text ? fixEncoding(product.normalized_text) : null,
+      normalized_text: buildNormalizedText({
+        short_description: product.short_description ? fixEncoding(product.short_description) : null,
+        long_description: product.long_description ? fixEncoding(product.long_description) : null,
+        vvs_number: product.vvs_number ? fixEncoding(product.vvs_number) : null,
+        ean_id: product.ean_id,
+        supplier_item_id: product.supplier_item_id ? fixEncoding(product.supplier_item_id) : null,
+      }),
       supplier_item_id: product.supplier_item_id ? fixEncoding(product.supplier_item_id) : null,
       vvs_number: product.vvs_number ? fixEncoding(product.vvs_number) : null,
+      unit_price_norm: normalizeUnitPrice(product),
+      category: inferCategory(product),
     }));
 
     // Insert the products batch

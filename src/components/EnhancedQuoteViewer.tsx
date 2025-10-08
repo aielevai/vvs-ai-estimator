@@ -1,16 +1,26 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CheckCircle, AlertTriangle, Info, Bot } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { CheckCircle, AlertTriangle, Info, Bot, Trash2, Plus } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 interface EnhancedQuoteViewerProps {
   quote: any;
   pricingAnalysis?: any;
+  onQuoteUpdate?: (updatedQuote: any) => void;
 }
 
-export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ quote, pricingAnalysis }) => {
+export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ 
+  quote: initialQuote, 
+  pricingAnalysis,
+  onQuoteUpdate 
+}) => {
+  const [quote, setQuote] = useState(initialQuote);
+  const [isExplanationOpen, setIsExplanationOpen] = useState(false);
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('da-DK', {
       style: 'currency',
@@ -182,32 +192,96 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ quote,
               </div>
             ))}
 
-            {/* Material Lines Section */}
+            {/* FASE 7: Editable Material Lines Section */}
             {quote.quote_lines?.filter((line: any) => line.line_type === 'material').length > 0 ? (
               <div className="space-y-3">
-                <div className="text-sm font-medium text-muted-foreground">Materialer</div>
-                {quote.quote_lines?.filter((line: any) => line.line_type === 'material').map((line: any, index: number) => (
-                  <div key={line.id || `mat-${index}`} className="pl-4 border-l-2 border-muted">
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-sm">{line.description}</span>
-                          {line.material_code && (
-                            <Badge variant="secondary" className="text-xs">
-                              {line.material_code}
-                            </Badge>
-                          )}
+                <div className="flex justify-between items-center">
+                  <div className="text-sm font-medium text-muted-foreground">Materialer</div>
+                  <Button size="sm" variant="outline" className="h-8">
+                    <Plus size={14} className="mr-1" />
+                    Tilføj materiale
+                  </Button>
+                </div>
+                {quote.quote_lines?.filter((line: any) => line.line_type === 'material').map((line: any, index: number) => {
+                  const matIndex = quote.quote_lines?.findIndex((l: any) => l.id === line.id || (l.line_type === 'material' && quote.quote_lines.filter((x:any) => x.line_type === 'material').indexOf(l) === index));
+                  
+                  return (
+                    <div key={line.id || `mat-${index}`} className="pl-4 border-l-2 border-muted">
+                      <div className="grid grid-cols-12 gap-2 items-center">
+                        <div className="col-span-5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{line.description}</span>
+                            {line.material_code && (
+                              <Badge variant="secondary" className="text-xs">
+                                {line.material_code}
+                              </Badge>
+                            )}
+                            {!line.validated && (
+                              <Badge variant="destructive" className="text-xs">
+                                Ikke valideret
+                              </Badge>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {line.quantity} stk × {formatCurrency(line.unit_price || 0)}
+                        <div className="col-span-2">
+                          <Input 
+                            type="number" 
+                            min={0} 
+                            step={0.1}
+                            value={line.quantity}
+                            onChange={(e) => {
+                              const newLines = [...quote.quote_lines];
+                              newLines[matIndex].quantity = Number(e.target.value);
+                              newLines[matIndex].total_price = newLines[matIndex].quantity * newLines[matIndex].unit_price;
+                              const newSubtotal = newLines.reduce((s, l) => s + (l.total_price || 0), 0);
+                              const newVat = newSubtotal * 0.25;
+                              setQuote({ ...quote, quote_lines: newLines, subtotal: newSubtotal, vat_amount: newVat, total_amount: newSubtotal + newVat });
+                              onQuoteUpdate?.({ ...quote, quote_lines: newLines, subtotal: newSubtotal, vat_amount: newVat, total_amount: newSubtotal + newVat });
+                            }}
+                            className="h-8 text-sm"
+                          />
                         </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-medium text-sm">{formatCurrency(line.total_price || 0)}</div>
+                        <div className="col-span-2">
+                          <Input 
+                            type="number" 
+                            min={0} 
+                            step={0.01}
+                            value={line.unit_price}
+                            onChange={(e) => {
+                              const newLines = [...quote.quote_lines];
+                              newLines[matIndex].unit_price = Number(e.target.value);
+                              newLines[matIndex].total_price = newLines[matIndex].quantity * newLines[matIndex].unit_price;
+                              const newSubtotal = newLines.reduce((s, l) => s + (l.total_price || 0), 0);
+                              const newVat = newSubtotal * 0.25;
+                              setQuote({ ...quote, quote_lines: newLines, subtotal: newSubtotal, vat_amount: newVat, total_amount: newSubtotal + newVat });
+                              onQuoteUpdate?.({ ...quote, quote_lines: newLines, subtotal: newSubtotal, vat_amount: newVat, total_amount: newSubtotal + newVat });
+                            }}
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                        <div className="col-span-2 text-right font-medium text-sm">
+                          {formatCurrency(line.total_price || 0)}
+                        </div>
+                        <div className="col-span-1 text-right">
+                          <Button 
+                            size="sm" 
+                            variant="ghost" 
+                            className="h-8 w-8 p-0"
+                            onClick={() => {
+                              const newLines = quote.quote_lines.filter((_: any, i: number) => i !== matIndex);
+                              const newSubtotal = newLines.reduce((s: number, l: any) => s + (l.total_price || 0), 0);
+                              const newVat = newSubtotal * 0.25;
+                              setQuote({ ...quote, quote_lines: newLines, subtotal: newSubtotal, vat_amount: newVat, total_amount: newSubtotal + newVat });
+                              onQuoteUpdate?.({ ...quote, quote_lines: newLines, subtotal: newSubtotal, vat_amount: newVat, total_amount: newSubtotal + newVat });
+                            }}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <Alert>
@@ -252,6 +326,50 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ quote,
           )}
         </CardContent>
       </Card>
+
+      {/* FASE 7: Calculation Explanation */}
+      {pricingAnalysis?.calculation_explanation && (
+        <Card>
+          <CardHeader>
+            <Collapsible open={isExplanationOpen} onOpenChange={setIsExplanationOpen}>
+              <CollapsibleTrigger className="flex w-full items-center justify-between">
+                <CardTitle>Beregningsforklaring</CardTitle>
+                <Info size={16} />
+              </CollapsibleTrigger>
+            </Collapsible>
+          </CardHeader>
+          <Collapsible open={isExplanationOpen}>
+            <CollapsibleContent>
+              <CardContent className="space-y-3 text-sm">
+                {pricingAnalysis.calculation_explanation.reference && (
+                  <div>
+                    <strong>Reference:</strong> {pricingAnalysis.calculation_explanation.reference.base_hours}t for {pricingAnalysis.calculation_explanation.reference.average_size} enheder
+                    (beta={pricingAnalysis.calculation_explanation.reference.beta}, H={pricingAnalysis.calculation_explanation.reference.H})
+                  </div>
+                )}
+                {pricingAnalysis.calculation_explanation.hours && (
+                  <div>
+                    <strong>Timer:</strong> Rå {pricingAnalysis.calculation_explanation.hours.raw?.toFixed(1)}t → 
+                    Justeret {pricingAnalysis.calculation_explanation.hours.adjusted}t (clamped til [{pricingAnalysis.calculation_explanation.hours.min}, {pricingAnalysis.calculation_explanation.hours.max}])
+                  </div>
+                )}
+                {pricingAnalysis.calculation_explanation.materials && (
+                  <div>
+                    <strong>Materialer:</strong> {pricingAnalysis.calculation_explanation.materials.lines} linjer, 
+                    total {formatCurrency(pricingAnalysis.calculation_explanation.materials.total)}
+                  </div>
+                )}
+                {pricingAnalysis.calculation_explanation.floor_info && (
+                  <Alert className="mt-2">
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>{pricingAnalysis.calculation_explanation.floor_info}</AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </CollapsibleContent>
+          </Collapsible>
+        </Card>
+      )}
 
       {/* Calculation Details */}
       {pricingAnalysis?.breakdown && (

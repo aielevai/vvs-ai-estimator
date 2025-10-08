@@ -158,6 +158,7 @@ export type Database = {
       }
       enhanced_supplier_prices: {
         Row: {
+          category: string | null
           created_at: string
           ean_id: string | null
           gross_price: number | null
@@ -178,9 +179,11 @@ export type Database = {
           search_vector: unknown | null
           short_description: string | null
           supplier_item_id: string | null
+          unit_price_norm: number | null
           vvs_number: string | null
         }
         Insert: {
+          category?: string | null
           created_at?: string
           ean_id?: string | null
           gross_price?: number | null
@@ -201,9 +204,11 @@ export type Database = {
           search_vector?: unknown | null
           short_description?: string | null
           supplier_item_id?: string | null
+          unit_price_norm?: number | null
           vvs_number?: string | null
         }
         Update: {
+          category?: string | null
           created_at?: string
           ean_id?: string | null
           gross_price?: number | null
@@ -224,6 +229,7 @@ export type Database = {
           search_vector?: unknown | null
           short_description?: string | null
           supplier_item_id?: string | null
+          unit_price_norm?: number | null
           vvs_number?: string | null
         }
         Relationships: []
@@ -320,6 +326,30 @@ export type Database = {
           total_hours?: number | null
           total_materials_cost?: number | null
           total_project_cost?: number | null
+        }
+        Relationships: []
+      }
+      material_floors: {
+        Row: {
+          base_floor: number
+          id: string
+          per_unit_floor: number
+          project_type: string
+          updated_at: string
+        }
+        Insert: {
+          base_floor?: number
+          id?: string
+          per_unit_floor?: number
+          project_type: string
+          updated_at?: string
+        }
+        Update: {
+          base_floor?: number
+          id?: string
+          per_unit_floor?: number
+          project_type?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -706,6 +736,12 @@ export type Database = {
       import_enhanced_supplier_data: {
         Args: Record<PropertyKey, never>
         Returns: undefined
+      }
+      median_unit_price_by_category: {
+        Args: { in_category: string }
+        Returns: {
+          median: number
+        }[]
       }
     }
     Enums: {

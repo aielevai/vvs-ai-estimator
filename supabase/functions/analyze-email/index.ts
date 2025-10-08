@@ -130,6 +130,56 @@ serve(async (req) => {
       aiResult = {};
     }
 
+    // FASE 6: Guardrails og sanitering
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.57.4");
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    const sanitizeEstimatedSize = (x: any, unitDefault: string, typeDefault: number) => {
+      const v = Number(x?.value ?? x ?? 0);
+      const u = String(x?.unit ?? unitDefault);
+      
+      if (!isFinite(v) || v <= 0) {
+        return { value: typeDefault, unit: unitDefault };
+      }
+      
+      // Filtrer telefon/postnr-lignende værdier
+      const asStr = String(Math.round(v));
+      if (asStr.length >= 6 || /^2\d{7}$/.test(asStr) || /^\d{4}$/.test(asStr)) {
+        console.log(`Filtered suspicious size value: ${asStr} (likely phone/postal)`);
+        return { value: typeDefault, unit: unitDefault };
+      }
+      
+      return { value: v, unit: u };
+    };
+
+    // Hent profil for default værdier
+    const { data: profile } = await supabase
+      .from('pricing_profiles')
+      .select('*')
+      .eq('project_type', (aiResult as any).project?.type)
+      .single();
+
+    if ((aiResult as any).project) {
+      (aiResult as any).project.estimated_size = sanitizeEstimatedSize(
+        (aiResult as any).project.estimated_size,
+        profile?.unit ?? 'm2',
+        profile?.average_size ?? 1
+      );
+    }
+
+    // Complexity multiplier
+    const complexityMap: Record<string, number> = {
+      simple: 0.8,
+      medium: 1.0,
+      complex: 1.3,
+      emergency: 1.5
+    };
+    
+    if (!(aiResult as any).pricing_hints) (aiResult as any).pricing_hints = {};
+    (aiResult as any).pricing_hints.complexity_multiplier = complexityMap[(aiResult as any).project?.complexity] ?? 1.0;
+
     // Enhance the AI result with additional logic
     const enhanced = enhanceAnalysis(aiResult as any, emailContent);
 
