@@ -86,7 +86,11 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
               </div>
               <div>
                 <div className="text-sm text-muted-foreground">Størrelse</div>
-                <div className="font-medium">{pricingAnalysis.estimated_size}</div>
+                <div className="font-medium">
+                  {typeof pricingAnalysis.estimated_size === 'object' 
+                    ? `${pricingAnalysis.estimated_size.value} ${pricingAnalysis.estimated_size.unit}` 
+                    : pricingAnalysis.estimated_size}
+                </div>
               </div>
               <div>
                 <div className="text-sm text-muted-foreground">Kompleksitet</div>
