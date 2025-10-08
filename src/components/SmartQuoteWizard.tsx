@@ -377,7 +377,11 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Størrelse</p>
-                <p className="font-medium">{analysis.project.estimated_size} {analysis.project.size_unit}</p>
+                <p className="font-medium">
+                  {typeof analysis.project.estimated_size === 'object' && analysis.project.estimated_size
+                    ? `${analysis.project.estimated_size.value} ${analysis.project.estimated_size.unit}`
+                    : `${analysis.project.estimated_size} ${analysis.project.size_unit}`}
+                </p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Kompleksitet</p>

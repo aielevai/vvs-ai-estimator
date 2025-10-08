@@ -242,7 +242,9 @@ export default function Dashboard() {
                       {case_.extracted_data?.project?.type && (
                         <p className="text-xs text-muted-foreground">
                           {getProjectTypeLabel(case_.extracted_data.project.type)} - 
-                          {case_.extracted_data.project.estimated_size} {case_.extracted_data.project.size_unit}
+                          {typeof case_.extracted_data.project.estimated_size === 'object' && case_.extracted_data.project.estimated_size
+                            ? `${(case_.extracted_data.project.estimated_size as any).value} ${(case_.extracted_data.project.estimated_size as any).unit}`
+                            : `${case_.extracted_data.project.estimated_size} ${case_.extracted_data.project.size_unit}`}
                         </p>
                       )}
                       {case_.quotes && case_.quotes.length > 0 && (

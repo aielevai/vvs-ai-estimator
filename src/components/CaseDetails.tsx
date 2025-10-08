@@ -196,7 +196,13 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
                   <h4 className="font-medium mb-2">Projekt Detaljer</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                     <div><span className="font-medium">Type:</span> {getProjectTypeLabel(caseData.extracted_data.project.type)}</div>
-                    <div><span className="font-medium">Størrelse:</span> {caseData.extracted_data.project.estimated_size} {caseData.extracted_data.project.size_unit}</div>
+                    <div>
+                      <span className="font-medium">Størrelse:</span> {
+                        typeof caseData.extracted_data.project.estimated_size === 'object' && caseData.extracted_data.project.estimated_size
+                          ? `${(caseData.extracted_data.project.estimated_size as any).value} ${(caseData.extracted_data.project.estimated_size as any).unit}` 
+                          : `${caseData.extracted_data.project.estimated_size || ''} ${caseData.extracted_data.project.size_unit || ''}`
+                      }
+                    </div>
                     <div><span className="font-medium">Kompleksitet:</span> {caseData.extracted_data.project.complexity}</div>
                     <div><span className="font-medium">Hastende:</span> {caseData.extracted_data.project.urgency}</div>
                   </div>
