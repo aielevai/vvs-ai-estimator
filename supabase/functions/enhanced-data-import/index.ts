@@ -113,13 +113,24 @@ async function importEnhancedProducts(supabase: any, csvData: string) {
           }
         });
 
+        // FASE 1: Normaliser enhedspris
+        const base = Number(product.net_price ?? product.gross_price ?? 0);
+        const pq = Number(product.price_quantity ?? 1) || 1;
+        const of1 = Number(product.ordering_factor_1 ?? 1) || 1;
+        product.unit_price_norm = base / (pq * of1);
+
         // Create normalized text for search
-        product.normalized_text = [
+        const parts = [
           product.short_description,
           product.long_description,
           product.vvs_number,
+          product.ean_id,
           product.supplier_item_id
         ].filter(Boolean).join(' ').toLowerCase();
+        product.normalized_text = parts.normalize("NFKD");
+        
+        // Simpel kategori-inferens
+        product.category = inferCategory(product);
 
         batch.push(product);
       } catch (error) {
@@ -317,4 +328,20 @@ function parseDate(dateStr: string): string | null {
   } catch {
     return null;
   }
+}
+
+function inferCategory(product: any): string {
+  const desc = (product.short_description || product.long_description || '').toLowerCase();
+  
+  if (desc.includes('rør') || desc.includes('pipe')) return 'pipe';
+  if (desc.includes('radiator')) return 'radiators';
+  if (desc.includes('gulvvarme')) return 'floor_heating';
+  if (desc.includes('ventil') || desc.includes('valve')) return 'valves';
+  if (desc.includes('armatur') || desc.includes('fixture')) return 'fixtures';
+  if (desc.includes('flise') || desc.includes('tile')) return 'tiles';
+  if (desc.includes('membran') || desc.includes('tætning')) return 'waterproofing';
+  if (desc.includes('isoler')) return 'insulation';
+  if (desc.includes('ventilat')) return 'ventilation';
+  
+  return 'general';
 }

@@ -382,33 +382,39 @@ export type Database = {
       }
       pricing_config: {
         Row: {
+          city: string | null
           created_at: string
           effective_from: string
           hourly_rate: number
           id: string
           minimum_project: number
+          postal_code: string | null
           service_vehicle_rate: number
           updated_at: string
           vat_rate: number
           version: number
         }
         Insert: {
+          city?: string | null
           created_at?: string
           effective_from?: string
           hourly_rate?: number
           id?: string
           minimum_project?: number
+          postal_code?: string | null
           service_vehicle_rate?: number
           updated_at?: string
           vat_rate?: number
           version?: number
         }
         Update: {
+          city?: string | null
           created_at?: string
           effective_from?: string
           hourly_rate?: number
           id?: string
           minimum_project?: number
+          postal_code?: string | null
           service_vehicle_rate?: number
           updated_at?: string
           vat_rate?: number
@@ -429,7 +435,7 @@ export type Database = {
           min_hours: number
           min_labor_hours: number
           project_type: string
-          size_unit: string
+          unit: string
           updated_at: string
         }
         Insert: {
@@ -444,7 +450,7 @@ export type Database = {
           min_hours: number
           min_labor_hours: number
           project_type: string
-          size_unit: string
+          unit: string
           updated_at?: string
         }
         Update: {
@@ -459,7 +465,7 @@ export type Database = {
           min_hours?: number
           min_labor_hours?: number
           project_type?: string
-          size_unit?: string
+          unit?: string
           updated_at?: string
         }
         Relationships: []
