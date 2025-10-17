@@ -22,6 +22,73 @@ interface ProductRow {
   price_unit?: string;
 }
 
+// Faste NET-priser pr komponent (jf. faglig specifikation)
+const COMPONENT_NET_PRICES: Record<string, number> = {
+  // Afløb (ca. 4.200 kr total NET)
+  'unidrain_linjeafløb': 2800,
+  'unidrain_ø50_lavt_udløbshus': 900,
+  'afløbsrør_fittings': 500,
+  
+  // PEX/rør (ca. 2.300 kr total NET)
+  'pex_15mm': 15,  // pr meter
+  'fordeler': 800,
+  'fordeler_køkken': 600,
+  'fordeler_gulvvarme': 1200,
+  'ballofix_beslag': 120,  // pr stk
+  
+  // Sanitær
+  'geberit_duofix_cisterne': 3000,
+  'wc_skål': 2500,  // hvis ikke kundeleveret
+  'trykplade': 800,
+  
+  // Armaturer
+  'armatur_håndvask': 1200,
+  'armatur_bruser': 1500,
+  'køkkenarmatur': 1800,
+  
+  // Diverse (ca. 3.700 kr total NET)
+  'småmateriel_beslag': 2800,
+  'småmateriel_køkken': 1200,
+  'kørsel_affald': 900,
+  
+  // Gulvvarme
+  'gulvvarme_slanger': 45,  // pr meter
+  'termostat': 800,
+  'shunt': 1500,
+  'isolering': 80,  // pr m2
+  
+  // Radiator
+  'radiator': 2500,  // pr stk
+  'radiatorrør': 120,  // pr meter
+  'ventiler': 180,  // pr stk
+  
+  // Fjernvarme
+  'varmeveksler': 12000,
+  'fjernvarme_rør': 200,  // pr meter
+  'afspærringsventiler': 350,
+  'sikkerhedsventil': 450,
+  'trykmåler': 280,
+  'isolering_fjernvarme': 95,  // pr meter
+  'varmt_arbejde_tillæg': 600,
+  
+  // Rørinstallation
+  'rør_materiale': 85,  // pr meter
+  'fittings': 450,  // pr sæt
+  'beslag': 180,  // pr sæt
+  'isolering_rør': 45,  // pr meter
+  
+  // Køkken
+  'køkkenvask_sifon': 350,
+  'afløbsrør': 95,  // pr meter
+  'opvaskemaskine_tilslutning': 280,
+  'vaskemaskine_tilslutning': 280,
+  
+  // Service
+  'service_materiel': 450,
+  'reservedele': 600,
+  'forbrugsartikler': 300
+};
+
 interface MaterialLineNet {
   product_code: string;
   description: string;
@@ -37,6 +104,19 @@ interface MaterialLineNet {
 
 // Søg produkt for specifik BOM-komponent
 async function searchProductForComponent(supabase: any, comp: BomLine): Promise<ProductRow | null> {
+  // Først: tjek om vi har en fast NET-pris for denne komponent
+  if (COMPONENT_NET_PRICES[comp.component]) {
+    return {
+      product_code: comp.component,
+      vvs_number: comp.component,
+      description: comp.component,
+      unit_price_norm: COMPONENT_NET_PRICES[comp.component],
+      unit: comp.unit,
+      validated: true
+    } as ProductRow;
+  }
+  
+  // Ellers: søg i databasen
   const q = comp.component.toLowerCase();
   
   const { data } = await supabase

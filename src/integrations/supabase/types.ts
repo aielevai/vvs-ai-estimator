@@ -609,6 +609,7 @@ export type Database = {
       }
       quote_lines: {
         Row: {
+          customer_supplied: boolean | null
           description: string
           id: string
           labor_hours: number | null
@@ -621,6 +622,7 @@ export type Database = {
           unit_price: number | null
         }
         Insert: {
+          customer_supplied?: boolean | null
           description: string
           id?: string
           labor_hours?: number | null
@@ -633,6 +635,7 @@ export type Database = {
           unit_price?: number | null
         }
         Update: {
+          customer_supplied?: boolean | null
           description?: string
           id?: string
           labor_hours?: number | null
