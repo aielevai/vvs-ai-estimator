@@ -22,16 +22,17 @@ interface ProductRow {
   price_unit?: string;
 }
 
-interface MaterialLine {
+interface MaterialLineNet {
   product_code: string;
   description: string;
   quantity: number;
   unit: string;
-  unit_price: number;
-  total_price: number;
+  net_unit_price: number;
+  net_total_price: number;
   validated: boolean;
   component: string;
   category: string;
+  customer_supplied?: boolean;
 }
 
 // Søg produkt for specifik BOM-komponent
@@ -67,46 +68,42 @@ async function categoryMedianPrice(supabase: any, category: string): Promise<num
   }
 }
 
-// Map BOM-linjer til faktiske produkter
-async function mapBOMToProducts(supabase: any, bom: BomLine[]): Promise<MaterialLine[]> {
-  const out: MaterialLine[] = [];
+// Map BOM-linjer til faktiske produkter (NET priser)
+async function mapBOMToProductsNet(supabase: any, bom: BomLine[]): Promise<MaterialLineNet[]> {
+  const out: MaterialLineNet[] = [];
   
   for (const comp of bom) {
-    const p = await searchProductForComponent(supabase, comp);
-    const q = Number(comp.quantity);
-    
-    if (p && p.unit_price_norm) {
-      const code = p.vvs_number || p.supplier_item_id || p.ean_id || comp.component;
-      const desc = p.short_description || p.long_description || comp.component;
-      const price = Number(p.unit_price_norm);
-      
-      out.push({
-        product_code: String(code),
-        description: String(desc),
-        quantity: q,
-        unit: comp.unit,
-        unit_price: price,
-        total_price: q * price,
-        validated: true,
-        component: comp.component,
-        category: comp.category
-      });
-    } else {
-      // Fallback til kategori-median
-      const fallback = await categoryMedianPrice(supabase, comp.category);
-      
+    // Kundeleveret → net 0 (men behold linjen som info)
+    if (comp.customer_supplied) {
       out.push({
         product_code: comp.component,
         description: comp.component,
-        quantity: q,
+        quantity: comp.quantity,
         unit: comp.unit,
-        unit_price: fallback,
-        total_price: q * fallback,
-        validated: false,
+        net_unit_price: 0,
+        net_total_price: 0,
+        validated: true,
         component: comp.component,
-        category: comp.category
+        category: comp.category,
+        customer_supplied: true
       });
+      continue;
     }
+    
+    const p = await searchProductForComponent(supabase, comp);
+    const price = Number(p?.unit_price_norm ?? await categoryMedianPrice(supabase, comp.category));
+    
+    out.push({
+      product_code: p?.vvs_number || p?.supplier_item_id || p?.ean_id || comp.component,
+      description: p?.short_description || p?.long_description || comp.component,
+      quantity: comp.quantity,
+      unit: comp.unit,
+      net_unit_price: price,
+      net_total_price: price * comp.quantity,
+      validated: Boolean(p),
+      component: comp.component,
+      category: comp.category
+    });
   }
   
   return out;
@@ -132,49 +129,21 @@ serve(async (req) => {
     
     console.log(`Generated BOM with ${bom.length} components`);
 
-    // 2) Map BOM til produkter
-    const mapped = await mapBOMToProducts(supabase, bom);
+    // 2) Map BOM til produkter (NET priser)
+    const materialsNet = await mapBOMToProductsNet(supabase, bom);
     
-    // 3) Summér
-    let totalMaterialCost = mapped.reduce((s, m) => s + m.total_price, 0);
+    // 3) Summér NET
+    const netTotal = materialsNet.reduce((s, m) => s + m.net_total_price, 0);
     
-    console.log(`Mapped materials total: ${totalMaterialCost} kr`);
+    console.log(`Mapped materials NET total: ${netTotal} kr`);
 
-    // 4) Hent gulv og håndhæv det
-    const { data: floorRow } = await supabase
-      .from('material_floors')
-      .select('*')
-      .eq('project_type', projectType)
-      .single();
-    
-    const matFloor = getMaterialFloor(projectType, estimatedSize, floorRow);
-    
-    let floorApplied = false;
-    if (totalMaterialCost < matFloor) {
-      console.log(`Material total ${totalMaterialCost} below floor ${matFloor}, applying floor`);
-      
-      // Hæv alle materialer proportionalt
-      const factor = matFloor / totalMaterialCost;
-      mapped.forEach(m => {
-        m.unit_price = m.unit_price * factor;
-        m.total_price = m.quantity * m.unit_price;
-      });
-      
-      totalMaterialCost = matFloor;
-      floorApplied = true;
-    }
-
-    // 5) Returnér itemiseret svar
+    // 5) Returnér itemiseret svar med NET priser (avance lægges på i calculate-quote)
     return new Response(JSON.stringify({
-      materials: mapped,
-      total_cost: totalMaterialCost,
+      materials_net: materialsNet,
+      net_total_cost: netTotal,
       project_type: projectType,
       estimated_size: estimatedSize,
-      mode: 'bom_first',
-      floor_applied: floorApplied,
-      material_floor: matFloor,
-      validated_count: mapped.filter(m => m.validated).length,
-      total_count: mapped.length
+      mode: 'bom_first_net'
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });

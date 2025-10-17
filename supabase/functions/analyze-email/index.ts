@@ -180,6 +180,27 @@ serve(async (req) => {
     if (!(aiResult as any).pricing_hints) (aiResult as any).pricing_hints = {};
     (aiResult as any).pricing_hints.complexity_multiplier = complexityMap[(aiResult as any).project?.complexity] ?? 1.0;
 
+    // Kundeleveret heuristik + kælder-signal
+    const text = cleanContent.toLowerCase();
+    if (!(aiResult as any).signals) (aiResult as any).signals = {};
+    (aiResult as any).signals.customer_supplied = {
+      wc_bowl: true,
+      flush_plate: true,
+      faucets: true
+    };
+    
+    // Hvis kunden faktisk giver VVS-nr, slår vi kundeleveret fra
+    if (/\b(vvs[- ]?nr|vvs[- ]?nummer|ean|varenr)\b/.test(text)) {
+      (aiResult as any).signals.customer_supplied = { 
+        wc_bowl: false, 
+        flush_plate: false, 
+        faucets: false 
+      };
+    }
+    
+    (aiResult as any).signals.basement = /\bkælder\b/.test(text) || 
+      (aiResult as any).project?.description?.toLowerCase?.().includes('kælder');
+
     // Enhance the AI result with additional logic
     const enhanced = enhanceAnalysis(aiResult as any, emailContent);
 

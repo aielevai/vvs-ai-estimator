@@ -3,9 +3,10 @@
 export interface BomLine {
   component: string;
   quantity: number;
-  unit: string;
+  unit: 'stk' | 'm' | 'm2' | 'sæt' | 'spand';
   category: string;
-  criticality: 'critical' | 'standard' | 'optional';
+  critical: boolean;
+  customer_supplied?: boolean;
 }
 
 // Affaldsprocenter pr kategori
@@ -26,40 +27,47 @@ function applyWaste(qty: number, category: string): number {
 const BOM_RULES: Record<string, (size: number, complexity: string, signals: any) => BomLine[]> = {
   bathroom_renovation: (size: number, complexity: string, signals: any) => {
     const lines: BomLine[] = [];
+    const s = Math.max(1, Number(size) || 1);
+    const waste = 0.12;
     
-    // Gulvvarme (hvis signalet er sat)
-    if (signals?.floor_heating) {
-      lines.push({ component: 'gulvvarmeslanger', quantity: applyWaste(size, 'floor'), unit: 'm2', category: 'floor_heating', criticality: 'critical' });
-      lines.push({ component: 'fordelerboks', quantity: 1, unit: 'stk', category: 'floor_heating', criticality: 'critical' });
+    // Afløb – Unidrain linje + kælder-specifikt lavt udløbshus
+    lines.push({ component: 'unidrain_linjeafløb', category: 'afløb', unit: 'stk', quantity: 1, critical: true });
+    if (signals?.basement) {
+      lines.push({ component: 'unidrain_ø50_lavt_udløbshus', category: 'afløb', unit: 'stk', quantity: 1, critical: true });
     }
+    lines.push({ component: 'afløbsrør_fittings', category: 'afløb', unit: 'sæt', quantity: 1, critical: true });
     
-    // Afløbsrør
-    lines.push({ component: 'afløbsrør 110mm', quantity: applyWaste(size * 1.5, 'pipe'), unit: 'meter', category: 'pipe', criticality: 'critical' });
-    lines.push({ component: 'afløbsrør 50mm', quantity: applyWaste(size * 2, 'pipe'), unit: 'meter', category: 'pipe', criticality: 'critical' });
+    // Brugsvand PEX
+    lines.push({ component: 'pex_15mm', category: 'rør', unit: 'm', quantity: Math.ceil(s * 8 * (1 + waste)), critical: true });
+    lines.push({ component: 'fordeler', category: 'rør', unit: 'stk', quantity: 1, critical: true });
+    lines.push({ component: 'ballofix_beslag', category: 'rør', unit: 'stk', quantity: Math.max(6, Math.ceil(s / 2)), critical: true });
     
-    // Vandrør
-    lines.push({ component: 'pex rør 16mm', quantity: applyWaste(size * 3, 'pipe'), unit: 'meter', category: 'pipe', criticality: 'critical' });
-    lines.push({ component: 'koblinger pex', quantity: Math.ceil(size * 2), unit: 'stk', category: 'fittings', criticality: 'standard' });
+    // Duofix-ramme + cisterne (skål/trykplade kundeleveret som standard)
+    lines.push({ component: 'geberit_duofix_cisterne', category: 'sanitær', unit: 'stk', quantity: 1, critical: true });
+    lines.push({ 
+      component: 'wc_skål', category: 'sanitær', unit: 'stk', quantity: 1, critical: false,
+      customer_supplied: signals?.customer_supplied?.wc_bowl !== false 
+    });
+    lines.push({ 
+      component: 'trykplade', category: 'sanitær', unit: 'stk', quantity: 1, critical: false,
+      customer_supplied: signals?.customer_supplied?.flush_plate !== false 
+    });
     
-    // Sanitet
-    lines.push({ component: 'vask komplet', quantity: 1, unit: 'stk', category: 'fixtures', criticality: 'critical' });
-    lines.push({ component: 'toilet komplet', quantity: 1, unit: 'stk', category: 'fixtures', criticality: 'critical' });
+    // Armaturer (kundeleveret som standard)
+    lines.push({ 
+      component: 'armatur_håndvask', category: 'armatur', unit: 'stk', quantity: 1, critical: false,
+      customer_supplied: signals?.customer_supplied?.faucets !== false 
+    });
+    lines.push({ 
+      component: 'armatur_bruser', category: 'armatur', unit: 'stk', quantity: 1, critical: false,
+      customer_supplied: signals?.customer_supplied?.faucets !== false 
+    });
     
-    if (size > 4) {
-      lines.push({ component: 'bruseniche', quantity: 1, unit: 'stk', category: 'fixtures', criticality: 'critical' });
-      lines.push({ component: 'armatur bruser', quantity: 1, unit: 'stk', category: 'fixtures', criticality: 'critical' });
-    }
+    // Forbrug/vådrum (VVS-del)
+    lines.push({ component: 'småmateriel_beslag', category: 'diverse', unit: 'sæt', quantity: 1, critical: true });
     
-    // Fliser og membran
-    lines.push({ component: 'gulvfliser', quantity: applyWaste(size, 'tiles'), unit: 'm2', category: 'tiles', criticality: 'standard' });
-    lines.push({ component: 'vægfliser', quantity: applyWaste(size * 2.5, 'tiles'), unit: 'm2', category: 'tiles', criticality: 'standard' });
-    lines.push({ component: 'membran', quantity: applyWaste(size * 1.2, 'floor'), unit: 'm2', category: 'waterproofing', criticality: 'critical' });
-    
-    // Ventilation
-    lines.push({ component: 'ventilator', quantity: 1, unit: 'stk', category: 'ventilation', criticality: 'standard' });
-    
-    // Småvarer
-    lines.push({ component: 'lim og fugemasse', quantity: size * 150, unit: 'kr', category: 'consumables', criticality: 'standard' });
+    // Kørsel/affald
+    lines.push({ component: 'kørsel_affald', category: 'diverse', unit: 'sæt', quantity: 1, critical: true });
     
     return lines;
   },

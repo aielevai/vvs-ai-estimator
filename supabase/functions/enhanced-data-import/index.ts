@@ -7,6 +7,32 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+function normalizeUnitPrice(p: any): number {
+  const base = Number(p.net_price ?? p.gross_price ?? 0);
+  const pq = Number(p.price_quantity ?? 1) || 1;
+  const of1 = Number(p.ordering_factor_1 ?? 1) || 1;
+  return base / (pq * of1);
+}
+
+function buildNormalizedText(p: any): string {
+  const parts = [
+    p.short_description, p.long_description,
+    p.vvs_number, p.ean_id, p.supplier_item_id
+  ].filter(Boolean).join(' ').toLowerCase();
+  return parts.normalize("NFKD");
+}
+
+function inferCategory(p: any): string {
+  const text = (p.short_description || p.long_description || '').toLowerCase();
+  if (text.includes('rør') || text.includes('pipe')) return 'rør';
+  if (text.includes('ventil') || text.includes('valve')) return 'ventil';
+  if (text.includes('armatur') || text.includes('faucet')) return 'armatur';
+  if (text.includes('afløb') || text.includes('drain')) return 'afløb';
+  if (text.includes('radiator')) return 'radiator';
+  if (text.includes('gulvvarme') || text.includes('floor heating')) return 'gulvvarme';
+  return 'diverse';
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -113,23 +139,9 @@ async function importEnhancedProducts(supabase: any, csvData: string) {
           }
         });
 
-        // FASE 1: Normaliser enhedspris
-        const base = Number(product.net_price ?? product.gross_price ?? 0);
-        const pq = Number(product.price_quantity ?? 1) || 1;
-        const of1 = Number(product.ordering_factor_1 ?? 1) || 1;
-        product.unit_price_norm = base / (pq * of1);
-
-        // Create normalized text for search
-        const parts = [
-          product.short_description,
-          product.long_description,
-          product.vvs_number,
-          product.ean_id,
-          product.supplier_item_id
-        ].filter(Boolean).join(' ').toLowerCase();
-        product.normalized_text = parts.normalize("NFKD");
-        
-        // Simpel kategori-inferens
+        // FASE 1: Normaliser enhedspris og tekst
+        product.unit_price_norm = normalizeUnitPrice(product);
+        product.normalized_text = buildNormalizedText(product);
         product.category = inferCategory(product);
 
         batch.push(product);

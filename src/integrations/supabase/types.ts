@@ -386,10 +386,14 @@ export type Database = {
           created_at: string
           effective_from: string
           hourly_rate: number
+          hourly_rate_labor: number | null
+          hourly_rate_vehicle: number | null
           id: string
+          material_markup: number
           minimum_project: number
           postal_code: string | null
           service_vehicle_rate: number
+          timesats_mode: string
           updated_at: string
           vat_rate: number
           version: number
@@ -399,10 +403,14 @@ export type Database = {
           created_at?: string
           effective_from?: string
           hourly_rate?: number
+          hourly_rate_labor?: number | null
+          hourly_rate_vehicle?: number | null
           id?: string
+          material_markup?: number
           minimum_project?: number
           postal_code?: string | null
           service_vehicle_rate?: number
+          timesats_mode?: string
           updated_at?: string
           vat_rate?: number
           version?: number
@@ -412,10 +420,14 @@ export type Database = {
           created_at?: string
           effective_from?: string
           hourly_rate?: number
+          hourly_rate_labor?: number | null
+          hourly_rate_vehicle?: number | null
           id?: string
+          material_markup?: number
           minimum_project?: number
           postal_code?: string | null
           service_vehicle_rate?: number
+          timesats_mode?: string
           updated_at?: string
           vat_rate?: number
           version?: number

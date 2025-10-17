@@ -168,16 +168,25 @@ serve(async (req) => {
     let hours_adj = hours_raw * c * H;
     const hours = roundHalf(clamp(hours_adj, Number(profile.min_hours), Number(profile.max_hours)));
 
-    // 2) Arbejdsløn (kun ét minimum: min_labor_hours)
-    const hourlyRate = Number(config?.hourly_rate ?? 595);
-    const minLaborHours = Number(profile.min_labor_hours ?? 0);
-    const laborCost = Math.max(hours * hourlyRate, minLaborHours * hourlyRate);
+    // Hent config parametre
+    const VAT = Number(config?.vat_rate ?? 0.25);
+    const MARKUP = Number(config?.material_markup ?? 0.40);
+    const MODE = String(config?.timesats_mode ?? 'split');
 
-    // 3) Servicevogn proportionalt
-    const vehicleRate = Number(config?.service_vehicle_rate ?? 65);
+    // 2) Arbejdsløn + vogn baseret på mode
+    let laborRate = Number(config?.hourly_rate_labor ?? 595);
+    let vehicleRate = Number(config?.hourly_rate_vehicle ?? 65);
+    
+    if (MODE === 'all_in') {
+      laborRate = Number(config?.hourly_rate ?? 660);
+      vehicleRate = 0;
+    }
+    
+    const minLaborHours = Number(profile.min_labor_hours ?? 0);
+    const laborCost = Math.max(hours * laborRate, minLaborHours * laborRate);
     const vehicleCost = roundHalf(hours) * vehicleRate;
 
-    // 4) Materialer (kald material-lookup med BOM-first)
+    // 3) Materialer fra material-lookup (ALTID NET priser)
     let materialResp: any = null;
     try {
       materialResp = await supabase.functions.invoke('material-lookup', {
@@ -192,10 +201,49 @@ serve(async (req) => {
       console.error('Material lookup failed:', e);
     }
 
-    const materials = materialResp?.data?.materials ?? [];
-    const materialsTotal = materials.reduce((s: number, m: any) => s + Number(m.total_price ?? 0), 0);
+    const materials_net = materialResp?.data?.materials_net ?? [];
+    
+    // Hent materiale-gulv og håndhæv det på SALG-niveau (net × 1,4)
+    const { data: floor } = await supabase
+      .from('material_floors')
+      .select('*')
+      .eq('project_type', analysis.project.type)
+      .single();
+    
+    const matFloorSale = (Number(floor?.base_floor ?? 0) + Number(floor?.per_unit_floor ?? 0) * size);
 
-    // 5) Prisbog - deterministiske tillæg
+    // Byg salgs-linjer med avance (40% markup)
+    const materials_lines = materials_net.map((m: any) => {
+      const sale_unit = m.net_unit_price * (m.customer_supplied ? 0 : (1 + MARKUP));
+      const sale_total = sale_unit * m.quantity;
+      return {
+        line_type: 'material',
+        description: m.description,
+        quantity: m.quantity,
+        unit: m.unit,
+        unit_price: sale_unit,
+        total_price: sale_total,
+        material_code: m.product_code,
+        validated: m.validated,
+        customer_supplied: !!m.customer_supplied
+      };
+    });
+    
+    let materialsTotal = materials_lines.reduce((s: number, x: any) => s + x.total_price, 0);
+    
+    // Gulv (salg) – hvis under, løft kritiske komponenter proportionelt
+    if (materialsTotal < matFloorSale && materialsTotal > 0) {
+      const factor = matFloorSale / materialsTotal;
+      materials_lines.forEach((l: any) => { 
+        if (!l.customer_supplied) { 
+          l.unit_price *= factor; 
+          l.total_price *= factor; 
+        } 
+      });
+      materialsTotal = materials_lines.reduce((s: number, x: any) => s + x.total_price, 0);
+    }
+
+    // 4) Prisbog - deterministiske tillæg
     const surcharges = evaluatePricingRules(
       analysis.signals ?? {},
       analysis.project.complexity ?? 'medium',
@@ -204,45 +252,51 @@ serve(async (req) => {
     );
     const surchargeTotal = surcharges.reduce((s, x) => s + x.amount, 0);
 
-    // 6) Projektminimum (kun hvis type-flag er true, og kun på (arbejde+vogn+tilæg))
+    // 5) Projektminimum (kun hvis type-flag er true, og kun på (arbejde+vogn+tilæg))
     const subtotalExMaterials = laborCost + vehicleCost + surchargeTotal;
     const projectMinimum = Number(config?.minimum_project ?? 4500);
-    let minimumLine: null | { desc: string; add: number } = null;
+    let minimumLine: any = null;
     if (profile.apply_minimum_project && subtotalExMaterials < projectMinimum) {
-      minimumLine = { desc: 'Projektminimum', add: projectMinimum - subtotalExMaterials };
+      minimumLine = { 
+        description: 'Projektminimum', 
+        amount: projectMinimum - subtotalExMaterials 
+      };
     }
 
-    // 7) Byg linjer
+    // 6) Byg linjer
     const lines: any[] = [];
-    lines.push({
-      line_type: 'labor',
-      description: 'Arbejdsløn',
-      quantity: hours,
-      unit: 'time',
-      unit_price: hourlyRate,
-      total_price: laborCost
-    });
-    lines.push({
-      line_type: 'vehicle',
-      description: 'Servicevogn',
-      quantity: hours,
-      unit: 'time',
-      unit_price: vehicleRate,
-      total_price: vehicleCost
-    });
-
-    for (const m of materials) {
+    
+    if (MODE === 'all_in') {
       lines.push({
-        line_type: 'material',
-        description: m.description,
-        quantity: m.quantity,
-        unit: m.unit,
-        unit_price: m.unit_price,
-        total_price: m.total_price,
-        material_code: m.product_code,
-        validated: m.validated
+        line_type: 'labor',
+        description: 'Arbejde (all-in timesats)',
+        quantity: hours,
+        unit: 'time',
+        unit_price: laborRate,
+        total_price: Math.max(hours * laborRate, minLaborHours * laborRate)
       });
+    } else {
+      lines.push({
+        line_type: 'labor',
+        description: 'Arbejdsløn',
+        quantity: hours,
+        unit: 'time',
+        unit_price: laborRate,
+        total_price: laborCost
+      });
+      if (vehicleRate > 0) {
+        lines.push({
+          line_type: 'vehicle',
+          description: 'Servicevogn',
+          quantity: hours,
+          unit: 'time',
+          unit_price: vehicleRate,
+          total_price: vehicleCost
+        });
+      }
     }
+
+    materials_lines.forEach((l: any) => lines.push(l));
 
     for (const s of surcharges) {
       lines.push({
@@ -258,17 +312,17 @@ serve(async (req) => {
     if (minimumLine) {
       lines.push({
         line_type: 'minimum',
-        description: minimumLine.desc,
+        description: minimumLine.description,
         quantity: 1,
         unit: 'stk',
-        unit_price: minimumLine.add,
-        total_price: minimumLine.add
+        unit_price: minimumLine.amount,
+        total_price: minimumLine.amount
       });
     }
 
-    // 8) Totaler FRA linjer
+    // 7) Totaler FRA linjer
     const subtotal = lines.reduce((a, x) => a + Number(x.total_price), 0);
-    const vat = subtotal * Number(config?.vat_rate ?? 0.25);
+    const vat = subtotal * VAT;
     const total = subtotal + vat;
 
     // 9) Gem quote
@@ -318,14 +372,17 @@ serve(async (req) => {
       reference: { base_hours: base, average_size: ref, beta, H, complexity: c },
       size_used: size,
       hours: { raw: hours_raw, adjusted: hours, min: profile.min_hours, max: profile.max_hours },
-      labor: { hourly_rate: hourlyRate, min_labor_hours: minLaborHours, laborCost },
-      vehicle: { rate: vehicleRate, vehicleCost },
-      materials: { lines: materials.length, total: materialsTotal },
+      timesats: MODE === 'all_in' ? { all_in: laborRate } : { labor: laborRate, vehicle: vehicleRate },
+      labor: { min_labor_hours: minLaborHours, laborCost },
+      vehicle: { vehicleCost },
+      materials: { 
+        lines: materials_lines.length, 
+        sale_total: materialsTotal, 
+        markup: MARKUP,
+        floor_applied: materialsTotal >= matFloorSale ? null : matFloorSale
+      },
       surcharges,
-      project_minimum_applied: Boolean(minimumLine),
-      floor_info: materialResp?.data?.floor_applied
-        ? `Materiale-gulv på ${materialResp.data.material_floor} kr blev anvendt`
-        : null
+      minimum_applied: !!minimumLine
     };
 
     return new Response(
