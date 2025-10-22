@@ -176,7 +176,7 @@ export type Database = {
           ordering_unit_2: string | null
           price_quantity: number | null
           price_unit: string | null
-          search_vector: unknown | null
+          search_vector: unknown
           short_description: string | null
           supplier_item_id: string | null
           unit_price_norm: number | null
@@ -201,7 +201,7 @@ export type Database = {
           ordering_unit_2?: string | null
           price_quantity?: number | null
           price_unit?: string | null
-          search_vector?: unknown | null
+          search_vector?: unknown
           short_description?: string | null
           supplier_item_id?: string | null
           unit_price_norm?: number | null
@@ -226,7 +226,7 @@ export type Database = {
           ordering_unit_2?: string | null
           price_quantity?: number | null
           price_unit?: string | null
-          search_vector?: unknown | null
+          search_vector?: unknown
           short_description?: string | null
           supplier_item_id?: string | null
           unit_price_norm?: number | null
@@ -619,6 +619,7 @@ export type Database = {
           quote_id: string | null
           sort_order: number | null
           total_price: number | null
+          unit: string | null
           unit_price: number | null
         }
         Insert: {
@@ -632,6 +633,7 @@ export type Database = {
           quote_id?: string | null
           sort_order?: number | null
           total_price?: number | null
+          unit?: string | null
           unit_price?: number | null
         }
         Update: {
@@ -645,6 +647,7 @@ export type Database = {
           quote_id?: string | null
           sort_order?: number | null
           total_price?: number | null
+          unit?: string | null
           unit_price?: number | null
         }
         Relationships: [
@@ -754,10 +757,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      import_enhanced_supplier_data: {
-        Args: Record<PropertyKey, never>
-        Returns: undefined
-      }
+      import_enhanced_supplier_data: { Args: never; Returns: undefined }
       median_unit_price_by_category: {
         Args: { in_category: string }
         Returns: {
