@@ -195,7 +195,7 @@ serve(async (req) => {
   }
 
   try {
-    const { projectType, estimatedSize, materialeAnalyse, complexity } = await req.json();
+    const { projectType, estimatedSize, signals = {}, materialeAnalyse, complexity } = await req.json();
     
     console.log(`BOM-first material lookup: ${projectType}, size: ${estimatedSize}`);
 
@@ -203,8 +203,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // 1) Generér deterministisk BOM
-    const signals = materialeAnalyse?.signaler || {};
+    // 1) Generér deterministisk BOM med signals
     const bom = generateProjectBOM(projectType, estimatedSize, complexity || 'medium', signals);
     
     console.log(`Generated BOM with ${bom.length} components`);

@@ -193,6 +193,7 @@ serve(async (req) => {
         body: {
           projectType: analysis.project.type,
           estimatedSize: size,
+          signals: analysis.signals,
           materialeAnalyse: analysis.materiale_analyse,
           complexity: analysis.project.complexity
         }
@@ -224,7 +225,6 @@ serve(async (req) => {
         unit_price: sale_unit,
         total_price: sale_total,
         material_code: m.product_code,
-        validated: m.validated,
         customer_supplied: !!m.customer_supplied
       };
     });
