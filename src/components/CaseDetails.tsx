@@ -10,6 +10,7 @@ import { ArrowLeft, Brain, Calculator, CheckCircle, Sparkles } from "lucide-reac
 import { useToast } from "@/hooks/use-toast";
 import QuoteViewer from "./QuoteViewer";
 import SmartQuoteWizard from "./SmartQuoteWizard";
+import { supabase } from "@/integrations/supabase/client";
 
 interface CaseDetailsProps {
   case: Case;
@@ -30,24 +31,19 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
     setAnalyzing(true);
     try {
       // 1) Kald analyze-email
-      const analyzeResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/analyze-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
-        },
-        body: JSON.stringify({
+      const analyzeRes = await supabase.functions.invoke('analyze-email', {
+        body: {
           emailContent: caseData.description || caseData.email_content,
           subject: caseData.subject,
           caseId: caseData.id
-        })
+        }
       });
 
-      if (!analyzeResponse.ok) {
-        throw new Error('Analyse fejlede');
+      if (analyzeRes.error) {
+        throw new Error(analyzeRes.error.message || 'Analyse fejlede');
       }
 
-      const analysisResult = await analyzeResponse.json();
+      const analysisResult = analyzeRes.data;
 
       // 2) Gem extracted_data på casen
       await db.updateCase(caseData.id, {
@@ -61,26 +57,23 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
       });
 
       // 3) Kald automatisk calculate-quote
-      const quoteResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/calculate-quote', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
-        },
-        body: JSON.stringify({
-          caseId: caseData.id
-        })
+      const quoteRes = await supabase.functions.invoke('calculate-quote', {
+        body: { caseId: caseData.id }
       });
 
-      if (!quoteResponse.ok) {
-        throw new Error('Tilbudsberegning fejlede');
+      if (quoteRes.error) {
+        throw new Error(quoteRes.error.message || 'Tilbudsberegning fejlede');
       }
 
-      const quoteResult = await quoteResponse.json();
+      const quoteResult = quoteRes.data;
+
+      // Standardiserede feltnavne fra backend
+      const lineCount = Array.isArray(quoteResult.lines) ? quoteResult.lines.length : 0;
+      const total = quoteResult.total ?? quoteResult.quote?.total ?? 0;
 
       toast({
         title: "✅ Analyse + Tilbud Klar",
-        description: `Oprettet tilbud med ${quoteResult.quote_lines?.length || 0} linjer (${quoteResult.quote.total_amount?.toLocaleString('da-DK')} kr)`
+        description: `Oprettet med ${lineCount} linjer (${total.toLocaleString('da-DK')} kr)`
       });
 
       // 4) Hent opdateret case-data og vis tilbud

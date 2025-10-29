@@ -19,6 +19,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/valentin-config";
 import QuoteChatAssistant from "./QuoteChatAssistant";
+import { supabase } from "@/integrations/supabase/client";
 
 interface SmartQuoteWizardProps {
   caseData: any;
@@ -70,51 +71,40 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
     setLoading(true);
     try {
       // Step 1: AI Analysis
-      const analyzeResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/analyze-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
-        },
-        body: JSON.stringify({
+      const analyzeRes = await supabase.functions.invoke('analyze-email', {
+        body: {
           emailContent: caseData.description,
           subject: caseData.subject
-        })
+        }
       });
 
-      if (!analyzeResponse.ok) throw new Error('Analysis failed');
-      const analysisResult = await analyzeResponse.json();
+      if (analyzeRes.error) throw new Error(analyzeRes.error.message);
+      const analysisResult = analyzeRes.data;
       
       setAnalysis(analysisResult);
       setHours(analysisResult.pricing_hints?.base_hours_estimate || 20);
       
       // Step 2: Get AI material suggestions
-      const materialResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/material-lookup', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
-        },
-        body: JSON.stringify({
+      const materialRes = await supabase.functions.invoke('material-lookup', {
+        body: {
           projectType: analysisResult.project.type,
           projectDescription: analysisResult.project.description,
           estimatedSize: analysisResult.project.estimated_size,
           complexity: analysisResult.project.complexity,
           materialeAnalyse: analysisResult.materiale_analyse
-        })
+        }
       });
 
-      if (materialResponse.ok) {
-        const materialData = await materialResponse.json();
-        setMaterials(materialData.materials || []);
+      if (!materialRes.error && materialRes.data) {
+        setMaterials(materialRes.data.materials || []);
       }
 
       setStep('review');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Analysis error:', error);
       toast({
         title: "Analyse Fejl",
-        description: "Kunne ikke analysere sagen",
+        description: error.message || "Kunne ikke analysere sagen",
         variant: "destructive"
       });
     } finally {
@@ -165,54 +155,47 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
       setGenerationStep('analyzing');
 
       // 1) Kald analyze-email og gem på casen
-      const analyzeResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/analyze-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
-        },
-        body: JSON.stringify({
+      const analyzeRes = await supabase.functions.invoke('analyze-email', {
+        body: {
           emailContent: caseData.description || caseData.email_content,
           subject: caseData.subject,
           caseId: caseData.id
-        })
+        }
       });
 
-      if (!analyzeResponse.ok) {
-        throw new Error('Analyse fejlede');
+      if (analyzeRes.error) {
+        throw new Error(analyzeRes.error.message || 'Analyse fejlede');
       }
 
       setGenerationStep('pricing');
 
       // 2) Kald calculate-quote (bruger extracted_data fra casen)
-      const quoteResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/calculate-quote', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
-        },
-        body: JSON.stringify({
-          caseId: caseData.id
-        })
+      const quoteRes = await supabase.functions.invoke('calculate-quote', {
+        body: { caseId: caseData.id }
       });
 
-      if (!quoteResponse.ok) {
-        throw new Error('Tilbudsberegning fejlede');
+      if (quoteRes.error) {
+        throw new Error(quoteRes.error.message || 'Tilbudsberegning fejlede');
       }
 
-      const quoteResult = await quoteResponse.json();
+      const quoteResult = quoteRes.data;
 
       setGenerationStep('saving');
       // Edge function har allerede gemt quote + quote_lines
-      setServerQuote(quoteResult.quote);
+      setServerQuote(quoteResult.quote ?? null);
       setGenerationStep('done');
+
+      // Standardiserede feltnavne fra backend
+      const lineCount = Array.isArray(quoteResult.lines) ? quoteResult.lines.length : 0;
+      const total = quoteResult.total ?? quoteResult.quote?.total ?? 0;
 
       toast({
         title: "✅ Tilbud Genereret",
-        description: `Tilbud oprettet med ${quoteResult.quote_lines?.length || 0} linjer (${formatCurrency(quoteResult.quote.total_amount)})`
+        description: `Oprettet med ${lineCount} linjer (${total.toLocaleString('da-DK')} kr)`
       });
 
-      onComplete();
+      // Trigger refetch af case + quotes + quote_lines
+      await onComplete();
     } catch (error: any) {
       console.error('Quote creation error:', error);
       setGenerationStep('error');
@@ -367,23 +350,37 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
             <Separator className="my-4" />
             
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span>Arbejde ({hours} timer)</span>
-                <span className="font-medium">{formatCurrency(costs.laborCost)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Servicebil</span>
-                <span className="font-medium">{formatCurrency(costs.serviceCar)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Materialer</span>
-                <span className="font-medium">{formatCurrency(costs.materialCost)}</span>
-              </div>
-              <Separator />
-              <div className="flex justify-between text-base font-bold">
-                <span>Total (inkl. moms)</span>
-                <span className="text-primary">{formatCurrency(costs.total)}</span>
-              </div>
+              {!serverQuote && (
+                <>
+                  <p className="text-xs text-muted-foreground mb-2">Preview (server beregner endelig pris):</p>
+                  <div className="flex justify-between">
+                    <span>Arbejde ({hours} timer)</span>
+                    <span className="font-medium">{formatCurrency(costs.laborCost)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Servicebil</span>
+                    <span className="font-medium">{formatCurrency(costs.serviceCar)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Materialer</span>
+                    <span className="font-medium">{formatCurrency(costs.materialCost)}</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between text-base font-bold">
+                    <span>Total (inkl. moms)</span>
+                    <span className="text-primary">{formatCurrency(costs.total)}</span>
+                  </div>
+                </>
+              )}
+              {serverQuote && (
+                <>
+                  <p className="text-xs text-green-600 mb-2">Server-beregnet:</p>
+                  <div className="flex justify-between text-base font-bold">
+                    <span>Total (inkl. moms)</span>
+                    <span className="text-primary">{formatCurrency(serverQuote.total ?? 0)}</span>
+                  </div>
+                </>
+              )}
             </div>
 
             {isGenerating && (
