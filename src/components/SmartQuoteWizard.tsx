@@ -39,24 +39,9 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationStep, setGenerationStep] = useState<'idle'|'analyzing'|'pricing'|'saving'|'done'|'error'>('idle');
   const [serverQuote, setServerQuote] = useState<any>(null);
-  const [previewRates, setPreviewRates] = useState({ labor: 595, vehicle: 65, vat: 0.25, material_markup: 0.40 });
-  const [saleMatWithFloor, setSaleMatWithFloor] = useState<number | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
-    // Hent pricing_config for preview-satser
-    (async () => {
-      const { data, error } = await supabase.from('pricing_config').select('*').limit(1).maybeSingle();
-      if (!error && data) {
-        setPreviewRates({ 
-          labor: Number(data.hourly_rate_labor ?? 595), 
-          vehicle: Number(data.hourly_rate_vehicle ?? 65),
-          vat: Number(data.vat_rate ?? 0.25),
-          material_markup: Number(data.material_markup ?? 0.40)
-        });
-      }
-    })();
-
     if (existingQuote) {
       // Load existing quote data
       const existingMaterials = existingQuote.quote_lines
@@ -162,67 +147,6 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
     ));
   };
 
-  const getPreviewMaterialSaleNoFloor = () => {
-    let netTotal = 0;    // beløb der mangler avance
-    let saleTotal = 0;   // beløb der allerede er med avance
-
-    for (const m of materials as any[]) {
-      const qty = Number(m.quantity ?? 1);
-      const hasNet = typeof m.net_unit_price === 'number' || typeof m.net_total_price === 'number';
-      const hasSale = typeof m.unit_price === 'number' || typeof m.total_price === 'number';
-
-      if (hasNet) {
-        const net = Number(m.net_total_price ?? (Number(m.net_unit_price ?? 0) * qty));
-        netTotal += net;
-      } else if (hasSale) {
-        const sale = Number(m.total_price ?? (Number(m.unit_price ?? 0) * qty));
-        saleTotal += sale;
-      }
-    }
-
-    const markup = 1 + (previewRates.material_markup ?? 0.40);
-    return netTotal * markup + saleTotal;        // avance KUN på net, ikke på sale
-  };
-
-  // Anvend materialegulv når vi har analysis
-  useEffect(() => {
-    (async () => {
-      const saleMatNoFloor = getPreviewMaterialSaleNoFloor();
-      const size = Number(analysis?.project?.estimated_size?.value ?? analysis?.project?.estimated_size ?? 0);
-      const projectType = analysis?.project?.type ?? '';
-
-      if (!projectType || !size) { 
-        setSaleMatWithFloor(saleMatNoFloor); 
-        return; 
-      }
-
-      const { data: floor } = await supabase
-        .from('material_floors')
-        .select('base_floor, per_unit_floor')
-        .eq('project_type', projectType)
-        .maybeSingle();
-
-      const floorSale = Number(floor?.base_floor ?? 0) + Number(floor?.per_unit_floor ?? 0) * size;
-      setSaleMatWithFloor(Math.max(saleMatNoFloor, floorSale));
-    })();
-  }, [analysis, materials, previewRates.material_markup]);
-
-  // Preview-beregning (kun til visning – serveren beregner rigtigt)
-  const getPreviewCost = () => {
-    const laborCost = hours * previewRates.labor;
-    const serviceCar = hours * previewRates.vehicle;
-    const materialCost = saleMatWithFloor ?? getPreviewMaterialSaleNoFloor();
-    const subtotal = laborCost + serviceCar + materialCost;
-    const vat = subtotal * previewRates.vat;
-    return {
-      laborCost,
-      serviceCar,
-      materialCost,
-      subtotal,
-      vat,
-      total: subtotal + vat
-    };
-  };
 
   const handleCreateQuote = async () => {
     try {
@@ -317,8 +241,6 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
       </Card>
     );
   }
-
-  const costs = getPreviewCost();
 
   return (
     <div className="space-y-6">
@@ -419,13 +341,11 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
                       />
                       <span className="text-muted-foreground">×</span>
                       <span>
-                        {material.net_unit_price !== undefined 
-                          ? material.net_unit_price 
-                          : material.unit_price} kr {material.net_unit_price !== undefined ? '(NET)' : '(salg)'}
+                        {material.unit_price || material.net_unit_price || 0} kr
                       </span>
                       <span className="text-muted-foreground">=</span>
                       <Badge variant="secondary">
-                        {formatCurrency(material.net_total_price !== undefined ? material.net_total_price : material.total_price)}
+                        {formatCurrency(material.total_price || material.net_total_price || 0)}
                       </Badge>
                     </div>
                   </div>
@@ -436,36 +356,45 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
             <Separator className="my-4" />
             
             <div className="space-y-2 text-sm">
-              {!serverQuote && (
+              {serverQuote ? (
                 <>
-                  <p className="text-xs text-muted-foreground mb-2">Preview (server beregner endelig pris):</p>
+                  <p className="text-xs text-green-600 mb-2">✅ Server-beregnet pris:</p>
                   <div className="flex justify-between">
-                    <span>Arbejde ({hours} timer)</span>
-                    <span className="font-medium">{formatCurrency(costs.laborCost)}</span>
+                    <span>Timer:</span>
+                    <span className="font-medium">{serverQuote.labor_hours?.toFixed(1) || '0.0'} t</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Servicebil</span>
-                    <span className="font-medium">{formatCurrency(costs.serviceCar)}</span>
+                    <span>Arbejde:</span>
+                    <span className="font-medium">
+                      {formatCurrency(serverQuote.quote_lines?.find((l: any) => l.line_type === 'labor')?.total_price || 0)}
+                    </span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Materialer</span>
-                    <span className="font-medium">{formatCurrency(costs.materialCost)}</span>
+                    <span>Servicevogn:</span>
+                    <span className="font-medium">
+                      {formatCurrency(serverQuote.quote_lines?.find((l: any) => l.line_type === 'service_vehicle')?.total_price || 0)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Materialer:</span>
+                    <span className="font-medium">
+                      {formatCurrency(
+                        serverQuote.quote_lines
+                          ?.filter((l: any) => l.line_type === 'material')
+                          .reduce((sum: number, l: any) => sum + (l.total_price || 0), 0) || 0
+                      )}
+                    </span>
                   </div>
                   <Separator />
                   <div className="flex justify-between text-base font-bold">
                     <span>Total (inkl. moms)</span>
-                    <span className="text-primary">{formatCurrency(costs.total)}</span>
+                    <span className="text-primary">{formatCurrency(serverQuote.total || 0)}</span>
                   </div>
                 </>
-              )}
-              {serverQuote && (
-                <>
-                  <p className="text-xs text-green-600 mb-2">Server-beregnet:</p>
-                  <div className="flex justify-between text-base font-bold">
-                    <span>Total (inkl. moms)</span>
-                    <span className="text-primary">{formatCurrency(serverQuote.total ?? 0)}</span>
-                  </div>
-                </>
+              ) : (
+                <div className="text-center text-muted-foreground py-4">
+                  <p className="text-sm">Klik 'Beregn Tilbud' for at få præcis pris fra serveren</p>
+                </div>
               )}
             </div>
 
