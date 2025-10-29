@@ -134,7 +134,7 @@ serve(async (req) => {
 
     // Get profile (brug analysis.project_type i stedet for analysis.project.type)
     const { data: profile } = await supabase
-      .from('pricing_profiles_v2')
+      .from('pricing_profiles')
       .select('*')
       .eq('project_type', analysis.project_type)
       .maybeSingle();
