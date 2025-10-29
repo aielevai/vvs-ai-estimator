@@ -58,21 +58,18 @@ export default function UnifiedDashboard() {
         description: "AI analyserer sagen"
       });
 
-      const analyzeResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/analyze-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
-        },
-        body: JSON.stringify({
+      // Brug supabase.functions.invoke i stedet for hardcoded fetch
+      const analyzeRes = await supabase.functions.invoke('analyze-email', {
+        body: {
           emailContent: caseItem.description,
-          subject: caseItem.subject
-        })
+          subject: caseItem.subject,
+          caseId: caseItem.id
+        }
       });
 
-      if (!analyzeResponse.ok) throw new Error('Analysis failed');
+      if (analyzeRes.error) throw new Error(analyzeRes.error.message || 'Analysis failed');
 
-      const analysisResult = await analyzeResponse.json();
+      const analysisResult = analyzeRes.data;
       await db.updateCase(caseItem.id, {
         extracted_data: analysisResult,
         status: 'analyzed'
@@ -80,15 +77,31 @@ export default function UnifiedDashboard() {
 
       toast({
         title: "✅ Analyse Færdig",
-        description: "Klik på sagen for at oprette tilbud"
+        description: "Beregner nu tilbud..."
+      });
+
+      // Kald automatisk calculate-quote
+      const quoteRes = await supabase.functions.invoke('calculate-quote', {
+        body: { caseId: caseItem.id }
+      });
+
+      if (quoteRes.error) throw new Error(quoteRes.error.message || 'Quote calculation failed');
+
+      const quoteResult = quoteRes.data;
+      const lineCount = Array.isArray(quoteResult.lines) ? quoteResult.lines.length : 0;
+      const total = quoteResult.total ?? quoteResult.quote?.total ?? 0;
+
+      toast({
+        title: "✅ Tilbud Klar",
+        description: `Oprettet med ${lineCount} linjer (${total.toLocaleString('da-DK')} kr)`
       });
 
       await loadCases();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Analysis failed:', error);
       toast({
         title: "Fejl",
-        description: "Analyse fejlede",
+        description: error.message || "Analyse fejlede",
         variant: "destructive"
       });
     }
@@ -165,13 +178,8 @@ export default function UnifiedDashboard() {
         description: "Henter nye emails fra Gmail"
       });
 
-      await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/gmail-sync', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
-        }
-      });
+      // Brug supabase.functions.invoke
+      await supabase.functions.invoke('gmail-sync');
 
       await loadCases();
 
@@ -179,11 +187,11 @@ export default function UnifiedDashboard() {
         title: "✅ Synkronisering Færdig",
         description: "Nye sager er hentet fra Gmail"
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Gmail sync failed:', error);
       toast({
         title: "Fejl",
-        description: "Gmail synkronisering fejlede",
+        description: error.message || "Gmail synkronisering fejlede",
         variant: "destructive"
       });
     }

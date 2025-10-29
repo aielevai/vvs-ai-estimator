@@ -39,9 +39,22 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationStep, setGenerationStep] = useState<'idle'|'analyzing'|'pricing'|'saving'|'done'|'error'>('idle');
   const [serverQuote, setServerQuote] = useState<any>(null);
+  const [previewRates, setPreviewRates] = useState({ labor: 595, vehicle: 65, vat: 0.25 });
   const { toast } = useToast();
 
   useEffect(() => {
+    // Hent pricing_config for preview-satser
+    (async () => {
+      const { data, error } = await supabase.from('pricing_config').select('*').limit(1).maybeSingle();
+      if (!error && data) {
+        setPreviewRates({ 
+          labor: Number(data.hourly_rate_labor ?? 595), 
+          vehicle: Number(data.hourly_rate_vehicle ?? 65),
+          vat: Number(data.vat_rate ?? 0.25)
+        });
+      }
+    })();
+
     if (existingQuote) {
       // Load existing quote data
       const existingMaterials = existingQuote.quote_lines
@@ -84,13 +97,14 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
       setAnalysis(analysisResult);
       setHours(analysisResult.pricing_hints?.base_hours_estimate || 20);
       
-      // Step 2: Get AI material suggestions
+      // Step 2: Get AI material suggestions med numerisk size og signals
       const materialRes = await supabase.functions.invoke('material-lookup', {
         body: {
           projectType: analysisResult.project.type,
           projectDescription: analysisResult.project.description,
-          estimatedSize: analysisResult.project.estimated_size,
+          estimatedSize: Number(analysisResult.project?.estimated_size?.value ?? analysisResult.project?.estimated_size ?? 1),
           complexity: analysisResult.project.complexity,
+          signals: analysisResult.signals ?? {},
           materialeAnalyse: analysisResult.materiale_analyse
         }
       });
@@ -134,11 +148,11 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
 
   // Preview-beregning (kun til visning – serveren beregner rigtigt)
   const getPreviewCost = () => {
-    const laborCost = hours * 595;
-    const serviceCar = hours * 65;
+    const laborCost = hours * previewRates.labor;
+    const serviceCar = hours * previewRates.vehicle;
     const materialCost = getTotalMaterialCost();
     const subtotal = laborCost + serviceCar + materialCost;
-    const vat = subtotal * 0.25;
+    const vat = subtotal * previewRates.vat;
     return {
       laborCost,
       serviceCar,
@@ -183,6 +197,7 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
       setGenerationStep('saving');
       // Edge function har allerede gemt quote + quote_lines
       setServerQuote(quoteResult.quote ?? null);
+      setHours(quoteResult.laborHours ?? quoteResult.quote?.labor_hours ?? hours); // ← vis servertimer
       setGenerationStep('done');
 
       // Standardiserede feltnavne fra backend
