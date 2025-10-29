@@ -73,7 +73,8 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return handleOptions();
 
   try {
-    const { emailContent, subject } = await req.json();
+    const body = await req.json();
+    const { emailContent, subject, caseId } = body;
     
     if (!emailContent) {
       return err('Email content required', 400);
@@ -198,6 +199,16 @@ serve(async (req) => {
     const enhanced = enhanceAnalysis(aiResult as any, emailContent);
 
     console.log('Enhanced analysis result:', enhanced);
+
+    // Gem analysis til cases.extracted_data
+    const { error: updateError } = await supabase
+      .from('cases')
+      .update({ extracted_data: enhanced })
+      .eq('id', body.caseId);
+
+    if (updateError) {
+      console.warn('⚠️ Failed to save analysis to case:', updateError);
+    }
 
     return ok(enhanced);
 

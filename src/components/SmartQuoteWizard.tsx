@@ -256,9 +256,18 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
 
       setGenerationStep('pricing');
 
-      // 2) Beregn tilbud med retry
+      // 2) Beregn tilbud med analyse-data (så calculate-quote ikke skal hente fra DB)
       const quoteResult = await withRetry(
-        () => edgeInvoke<any>(supabase, 'calculate-quote', { caseId: caseData.id }),
+        () => edgeInvoke<any>(supabase, 'calculate-quote', { 
+          caseId: caseData.id,
+          project_type: analysisResult.project.type,
+          estimatedSize: Number(
+            analysisResult.project.estimated_size?.value ?? 
+            analysisResult.project.estimated_size ?? 
+            1
+          ),
+          signals: analysisResult.signals ?? {}
+        }),
         1
       );
 

@@ -17,6 +17,16 @@ function roundHalf(n: number) {
   return Math.round(n * 2) / 2;
 }
 
+function normalizeCustomerSupplied(input: unknown): string[] {
+  if (Array.isArray(input)) return input;
+  if (input && typeof input === "object") {
+    return Object.entries(input as Record<string, boolean>)
+      .filter(([, v]) => v)
+      .map(([k]) => k);
+  }
+  return [];
+}
+
 // Prisbog - deterministiske tillæg
 function evaluatePricingRules(
   signals: any,
@@ -66,7 +76,8 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return handleOptions();
 
   try {
-    const { caseId } = await req.json();
+    const body = await req.json();
+    let { caseId, project_type, estimatedSize, signals } = body;
 
     if (!caseId) {
       return err('Case ID required', 400);
@@ -78,6 +89,41 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Prøv inline analysis først, ellers fallback til DB
+    let analysis = null;
+    if (project_type && typeof estimatedSize === 'number' && signals) {
+      analysis = { project_type, estimatedSize, signals };
+    } else {
+      // Fallback: hent fra cases.extracted_data
+      const { data: caseData } = await supabase
+        .from('cases')
+        .select('extracted_data')
+        .eq('id', caseId)
+        .single();
+      
+      const extracted = caseData?.extracted_data;
+      if (extracted?.project) {
+        analysis = {
+          project_type: extracted.project.type,
+          estimatedSize: Number(
+            extracted.project.estimated_size?.value ?? 
+            extracted.project.estimated_size ?? 
+            1
+          ),
+          signals: extracted.signals ?? {}
+        };
+      }
+    }
+
+    if (!analysis) {
+      return err('No analysis data - run analyze-email first', 400);
+    }
+
+    // Normalisér customer_supplied til array
+    analysis.signals.customer_supplied = normalizeCustomerSupplied(
+      analysis.signals.customer_supplied
+    );
+
     // Load config
     const { data: config } = await supabase
       .from('pricing_config')
@@ -86,44 +132,28 @@ serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    // Get case data
-    const { data: caseData, error: caseError } = await supabase
-      .from('cases')
-      .select('*')
-      .eq('id', caseId)
-      .single();
-
-    if (caseError || !caseData) {
-      return err('Case not found', 404);
-    }
-
-    const analysis = caseData.extracted_data;
-    if (!analysis?.project) {
-      return err('No analysis data - run analyze-email first', 400);
-    }
-
-    // Get profile (ny tabel: pricing_profiles_v2)
+    // Get profile (brug analysis.project_type i stedet for analysis.project.type)
     const { data: profile } = await supabase
       .from('pricing_profiles_v2')
       .select('*')
-      .eq('project_type', analysis.project.type)
+      .eq('project_type', analysis.project_type)
       .maybeSingle();
 
     if (!profile) {
-      console.error(`No profile for type: ${analysis.project.type}`);
-      return err(`Profile not found for ${analysis.project.type}`, 404);
+      console.error(`No profile for type: ${analysis.project_type}`);
+      return err(`Profile not found for ${analysis.project_type}`, 404);
     }
 
-    console.log('📐 Profile loaded:', { type: analysis.project.type, base_hours: profile.base_hours, beta: profile.beta_default });
+    console.log('📐 Profile loaded:', { type: analysis.project_type, base_hours: profile.base_hours, beta: profile.beta_default });
 
     // Historical data (optional)
     let historicalData: any = null;
     try {
       const histResp = await supabase.functions.invoke('historical-analysis', {
         body: {
-          projectType: analysis.project.type,
-          size: analysis.project.estimated_size?.value ?? profile.average_size,
-          complexity: complexityToNumeric(analysis.project.complexity ?? 'medium'),
+          projectType: analysis.project_type,
+          size: analysis.estimatedSize,
+          complexity: complexityToNumeric(analysis.signals.complexity ?? 'medium'),
           signals: analysis.signals ?? {}
         }
       });
@@ -132,12 +162,12 @@ serve(async (req) => {
       console.log('⚠️  Historical analysis skipped:', e);
     }
 
-    const size = Number(analysis.project.estimated_size?.value ?? analysis.project.estimated_size ?? profile.average_size);
+    const size = Number(analysis.estimatedSize);
     const base = Number(profile.base_hours);
     const ref = Number(profile.average_size);
     const beta = Number(historicalData?.analysis?.beta ?? profile.beta_default ?? 1.0);
     const H = Number(historicalData?.analysis?.historical_factor ?? 1.0);
-    const c = complexityToNumeric(analysis.project.complexity ?? 'medium');
+    const c = complexityToNumeric(analysis.signals.complexity ?? 'medium');
 
     console.log('🧮 Hour calculation:', { size, base, ref, beta, H, complexity: c });
 
@@ -175,11 +205,11 @@ serve(async (req) => {
     try {
       materialResp = await supabase.functions.invoke('material-lookup', {
         body: {
-          projectType: analysis.project.type,
+          projectType: analysis.project_type,
           estimatedSize: size,
           signals: analysis.signals ?? {},
           materialeAnalyse: analysis.materiale_analyse,
-          complexity: analysis.project.complexity
+          complexity: analysis.signals.complexity
         }
       });
     } catch (e) {
@@ -193,7 +223,7 @@ serve(async (req) => {
     const { data: floor } = await supabase
       .from('material_floors')
       .select('*')
-      .eq('project_type', analysis.project.type)
+      .eq('project_type', analysis.project_type)
       .maybeSingle();
     
     const matFloorSale = (Number(floor?.base_floor ?? 0) + Number(floor?.per_unit_floor ?? 0) * size);
@@ -238,9 +268,9 @@ serve(async (req) => {
     // 4) Prisbog - deterministiske tillæg
     const surcharges = evaluatePricingRules(
       analysis.signals ?? {},
-      analysis.project.complexity ?? 'medium',
+      analysis.signals.complexity ?? 'medium',
       size,
-      analysis.project.type
+      analysis.project_type
     );
     const surchargeTotal = surcharges.reduce((s, x) => s + x.amount, 0);
 
@@ -370,9 +400,9 @@ serve(async (req) => {
         pricing_snapshot,
         pricing_trace,
         metadata: {
-          project_type: analysis.project.type,
+          project_type: analysis.project_type,
           estimated_size: size,
-          complexity: analysis.project.complexity
+          complexity: analysis.signals.complexity
         }
       })
       .select()
