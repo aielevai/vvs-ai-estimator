@@ -1,10 +1,6 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { ok, err, handleOptions, normalizeCustomerSupplied } from "../_shared/http.ts";
 
 // Fix encoding issues in email text
 function fixEncoding(text: string): string {
@@ -74,19 +70,13 @@ Analyser denne email grundigt og returner struktureret JSON med:
 Returner KUN valid JSON - ingen anden tekst.`;
 
 serve(async (req) => {
-  // Handle CORS preflight requests
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === 'OPTIONS') return handleOptions();
 
   try {
     const { emailContent, subject } = await req.json();
     
     if (!emailContent) {
-      return new Response(
-        JSON.stringify({ error: 'Email content required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return err('Email content required', 400);
     }
 
     console.log('Analyzing email with GPT-5:', { subject, contentLength: emailContent.length });
@@ -198,7 +188,8 @@ serve(async (req) => {
       suppliedItems = [];  // Ingenting er kundeleveret
     }
     
-    (aiResult as any).signals.customer_supplied = suppliedItems;
+    // Normaliser for sikkerhed (i tilfælde AI returnerer objekt)
+    (aiResult as any).signals.customer_supplied = normalizeCustomerSupplied(suppliedItems);
     
     (aiResult as any).signals.basement = /\bkælder\b/.test(text) || 
       (aiResult as any).project?.description?.toLowerCase?.().includes('kælder');
@@ -208,26 +199,11 @@ serve(async (req) => {
 
     console.log('Enhanced analysis result:', enhanced);
 
-    return new Response(
-      JSON.stringify(enhanced),
-      { 
-        status: 200, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
-    );
+    return ok(enhanced);
 
   } catch (error) {
     console.error('AI Analysis error:', error);
-    return new Response(
-      JSON.stringify({ 
-        error: 'AI analysis failed', 
-        details: (error as any)?.message || 'Unknown error' 
-      }),
-      { 
-        status: 500, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
-    );
+    return err(error);
   }
 });
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/valentin-config";
 import QuoteChatAssistant from "./QuoteChatAssistant";
 import { supabase } from "@/integrations/supabase/client";
+import { edgeInvoke, withRetry } from "@/lib/edgeInvoke";
 
 interface SmartQuoteWizardProps {
   caseData: any;
@@ -28,7 +29,16 @@ interface SmartQuoteWizardProps {
   onCancel: () => void;
 }
 
-type WizardStep = 'analyzing' | 'review' | 'materials' | 'final';
+type WizardStep = 'analyzing' | 'review' | 'materials' | 'final' | 'error';
+
+interface WizardState {
+  caseId: string;
+  step: WizardStep;
+  snapshot?: any;
+  error?: string;
+}
+
+const LS_KEY = (caseId: string) => `smart-quote-wizard:${caseId}`;
 
 export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, onCancel }: SmartQuoteWizardProps) {
   const [step, setStep] = useState<WizardStep>(existingQuote ? 'review' : 'analyzing');
@@ -39,7 +49,75 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationStep, setGenerationStep] = useState<'idle'|'analyzing'|'pricing'|'saving'|'done'|'error'>('idle');
   const [serverQuote, setServerQuote] = useState<any>(null);
+  const busyRef = useRef(false);
   const { toast } = useToast();
+  
+  busyRef.current = loading || isGenerating;
+
+  // localStorage persistence
+  const saveState = (partial: Partial<WizardState>) => {
+    const prev = loadState();
+    const next = { ...prev, caseId: caseData.id, ...partial } as WizardState;
+    localStorage.setItem(LS_KEY(caseData.id), JSON.stringify(next));
+  };
+
+  const loadState = (): WizardState | null => {
+    try {
+      return JSON.parse(localStorage.getItem(LS_KEY(caseData.id)) || "null");
+    } catch {
+      return null;
+    }
+  };
+
+  const resetWizard = () => {
+    setStep('analyzing');
+    setServerQuote(null);
+    setAnalysis(null);
+    setMaterials([]);
+    localStorage.removeItem(LS_KEY(caseData.id));
+  };
+
+  // Gendan state ved mount
+  useEffect(() => {
+    const restored = loadState();
+    if (restored && restored.caseId === caseData.id && !existingQuote) {
+      setStep(restored.step);
+      if (restored.snapshot) {
+        setAnalysis(restored.snapshot.analysis ?? null);
+        setMaterials(restored.snapshot.materials ?? []);
+        setServerQuote(restored.snapshot.serverQuote ?? null);
+      }
+    }
+  }, [caseData.id]);
+
+  // Advar ved utilsigtet navigation
+  useEffect(() => {
+    const beforeUnload = (e: BeforeUnloadEvent) => {
+      if (busyRef.current) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, []);
+
+  // Bevar state ved popstate (browser tilbage-knap)
+  useEffect(() => {
+    const onPop = () => {
+      const s = loadState();
+      if (s && s.caseId === caseData.id) {
+        setStep(s.step);
+        if (s.snapshot) {
+          setAnalysis(s.snapshot.analysis ?? null);
+          setMaterials(s.snapshot.materials ?? []);
+          setServerQuote(s.snapshot.serverQuote ?? null);
+        }
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [caseData.id]);
 
   useEffect(() => {
     if (existingQuote) {
@@ -85,42 +163,54 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
 
   const runAnalysis = async () => {
     setLoading(true);
+    setStep('analyzing');
+    saveState({ step: 'analyzing', error: undefined });
+    
     try {
-      // Step 1: AI Analysis
-      const analyzeRes = await supabase.functions.invoke('analyze-email', {
-        body: {
+      // Step 1: AI Analysis med retry
+      const analysisResult = await withRetry(
+        () => edgeInvoke<any>(supabase, 'analyze-email', {
           emailContent: caseData.description,
           subject: caseData.subject,
           caseId: caseData.id
-        }
-      });
-
-      if (analyzeRes.error) throw new Error(analyzeRes.error.message);
-      const analysisResult = analyzeRes.data;
+        }),
+        1
+      );
       
       setAnalysis(analysisResult);
       setHours(analysisResult.pricing_hints?.base_hours_estimate || 20);
       
-      // Step 2: Get AI material suggestions med numerisk size og signals
-      const materialRes = await supabase.functions.invoke('material-lookup', {
-        body: {
+      // Step 2: Material lookup med retry
+      const materialResult = await withRetry(
+        () => edgeInvoke<any>(supabase, 'material-lookup', {
           projectType: analysisResult.project.type,
           projectDescription: analysisResult.project.description,
           estimatedSize: Number(analysisResult.project?.estimated_size?.value ?? analysisResult.project?.estimated_size ?? 1),
           complexity: analysisResult.project.complexity,
           signals: analysisResult.signals ?? {},
           materialeAnalyse: analysisResult.materiale_analyse
-        }
+        }),
+        1
+      );
+
+      const mats = materialResult.materials_net ?? materialResult.materials ?? [];
+      setMaterials(mats);
+
+      saveState({ 
+        step: 'review', 
+        snapshot: { analysis: analysisResult, materials: mats } 
       });
-
-      if (!materialRes.error && materialRes.data) {
-        const mats = materialRes.data.materials_net ?? materialRes.data.materials ?? [];
-        setMaterials(mats);
-      }
-
       setStep('review');
+      
+      toast({ 
+        title: "✅ Analyse fuldført",
+        description: `Fandt ${mats.length} materialer`
+      });
+      
     } catch (error: any) {
-      console.error('Analysis error:', error);
+      console.error('❌ Analysis error:', error);
+      setStep('error');
+      saveState({ step: 'error', error: error?.message });
       toast({
         title: "Analyse Fejl",
         description: error.message || "Kunne ikke analysere sagen",
@@ -149,47 +239,47 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
 
 
   const handleCreateQuote = async () => {
+    setIsGenerating(true);
+    setGenerationStep('analyzing');
+    saveState({ step: 'review' });
+    
     try {
-      setIsGenerating(true);
-      setGenerationStep('analyzing');
-
-      // 1) Kald analyze-email og gem på casen
-      const analyzeRes = await supabase.functions.invoke('analyze-email', {
-        body: {
+      // 1) Analyse med retry
+      const analysisResult = await withRetry(
+        () => edgeInvoke<any>(supabase, 'analyze-email', {
           emailContent: caseData.description || caseData.email_content,
           subject: caseData.subject,
           caseId: caseData.id
-        }
-      });
-
-      if (analyzeRes.error) {
-        throw new Error(analyzeRes.error.message || 'Analyse fejlede');
-      }
+        }),
+        1
+      );
 
       setGenerationStep('pricing');
 
-      // 2) Kald calculate-quote (bruger extracted_data fra casen)
-      const quoteRes = await supabase.functions.invoke('calculate-quote', {
-        body: { caseId: caseData.id }
-      });
-
-      if (quoteRes.error) {
-        throw new Error(quoteRes.error.message || 'Tilbudsberegning fejlede');
-      }
-
-      const quoteResult = quoteRes.data;
+      // 2) Beregn tilbud med retry
+      const quoteResult = await withRetry(
+        () => edgeInvoke<any>(supabase, 'calculate-quote', { caseId: caseData.id }),
+        1
+      );
 
       setGenerationStep('saving');
       setServerQuote(quoteResult.quote ?? null);
       
-      // Sync UI timer til server
       if (typeof quoteResult.laborHours === 'number') {
         setHours(quoteResult.laborHours);
       }
       
+      saveState({ 
+        step: 'review', 
+        snapshot: { 
+          analysis: analysisResult, 
+          materials, 
+          serverQuote: quoteResult.quote 
+        } 
+      });
+      
       setGenerationStep('done');
 
-      // Standardiserede feltnavne fra backend
       const lineCount = Array.isArray(quoteResult.lines) ? quoteResult.lines.length : 0;
       const total = quoteResult.total ?? quoteResult.quote?.total ?? 0;
 
@@ -198,11 +288,13 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
         description: `Oprettet med ${lineCount} linjer (${total.toLocaleString('da-DK')} kr)`
       });
 
-      // Trigger refetch af case + quotes + quote_lines
       await onComplete();
+      
     } catch (error: any) {
-      console.error('Quote creation error:', error);
+      console.error('❌ Quote creation error:', error);
+      setStep('error');
       setGenerationStep('error');
+      saveState({ step: 'error', error: error?.message });
       toast({
         title: "Fejl ved generering",
         description: error.message || "Kunne ikke generere tilbud",
@@ -237,6 +329,41 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
           <p className="text-muted-foreground text-sm">
             Analyserer projekttype, kompleksitet og materialer...
           </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (step === 'error') {
+    return (
+      <Card className="vvs-card border-destructive">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-destructive">
+            <AlertCircle className="h-5 w-5" />
+            Der opstod en fejl
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-muted-foreground text-sm">
+            Tilbudsgenerering fejlede. Din tilstand er gemt - du kan prøve igen.
+          </p>
+          <div className="flex gap-2">
+            <Button 
+              onClick={runAnalysis}
+              disabled={loading}
+              className="flex-1 vvs-button-primary"
+            >
+              <Brain className="h-4 w-4 mr-2" />
+              Prøv igen
+            </Button>
+            <Button 
+              onClick={resetWizard}
+              variant="outline"
+              className="flex-1"
+            >
+              Start forfra
+            </Button>
+          </div>
         </CardContent>
       </Card>
     );

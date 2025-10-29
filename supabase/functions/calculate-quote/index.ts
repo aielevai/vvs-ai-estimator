@@ -2,11 +2,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { ok, err, handleOptions } from "../_shared/http.ts";
 
 function complexityToNumeric(level: string): number {
   const map: Record<string, number> = { simple: 0.8, medium: 1.0, complex: 1.3, emergency: 1.5 };
@@ -67,18 +63,13 @@ function evaluatePricingRules(
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === 'OPTIONS') return handleOptions();
 
   try {
     const { caseId } = await req.json();
 
     if (!caseId) {
-      return new Response(JSON.stringify({ error: 'Case ID required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+      return err('Case ID required', 400);
     }
 
     console.log('📊 Calculating quote for case:', caseId);
@@ -103,18 +94,12 @@ serve(async (req) => {
       .single();
 
     if (caseError || !caseData) {
-      return new Response(JSON.stringify({ error: 'Case not found' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+      return err('Case not found', 404);
     }
 
     const analysis = caseData.extracted_data;
     if (!analysis?.project) {
-      return new Response(JSON.stringify({ error: 'No analysis data - run analyze-email first' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+      return err('No analysis data - run analyze-email first', 400);
     }
 
     // Get profile (ny tabel: pricing_profiles_v2)
@@ -126,10 +111,7 @@ serve(async (req) => {
 
     if (!profile) {
       console.error(`No profile for type: ${analysis.project.type}`);
-      return new Response(JSON.stringify({ error: `Profile not found for ${analysis.project.type}` }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+      return err(`Profile not found for ${analysis.project.type}`, 404);
     }
 
     console.log('📐 Profile loaded:', { type: analysis.project.type, base_hours: profile.base_hours, beta: profile.beta_default });
@@ -398,10 +380,7 @@ serve(async (req) => {
 
     if (quoteError) {
       console.error('❌ Failed to create quote:', quoteError);
-      return new Response(JSON.stringify({ error: 'Failed to create quote', details: quoteError }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+      return err(`Failed to create quote: ${quoteError.message}`, 500);
     }
 
     console.log(`✅ Quote created: ${quote.quote_number}`);
@@ -417,38 +396,22 @@ serve(async (req) => {
 
     if (linesError) {
       console.error('❌ Failed to create quote lines:', linesError);
-      return new Response(JSON.stringify({ error: 'Failed to save quote lines', details: linesError }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+      return err(`Failed to save quote lines: ${linesError.message}`, 500);
     }
 
     console.log(`✅ Saved ${linesWithQuoteId.length} quote lines`);
 
     // 12) Returnér standardiseret struktur
-    return new Response(
-      JSON.stringify({
-        quote,
-        lines: linesWithQuoteId,
-        total,
-        laborHours: hours,
-        calculation_explanation: pricing_trace
-      }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
-    );
+    return ok({
+      quote,
+      lines: linesWithQuoteId,
+      total,
+      laborHours: hours,
+      calculation_explanation: pricing_trace
+    });
+    
   } catch (error) {
     console.error('💥 Calculate quote error:', error);
-    return new Response(
-      JSON.stringify({
-        error: 'Quote calculation failed',
-        details: (error as any)?.message || 'Unknown error'
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
-    );
+    return err(error);
   }
 });

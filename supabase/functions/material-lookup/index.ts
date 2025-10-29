@@ -3,11 +3,7 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { generateProjectBOM, BomLine } from '../shared/bom-generator.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { ok, err, handleOptions, normalizeCustomerSupplied } from "../_shared/http.ts";
 
 // Map BOM til komponenter (NET priser fra DB eller fallback)
 async function mapBOMToProductsNet(supabase: any, bom: BomLine[]): Promise<any[]> {
@@ -39,12 +35,16 @@ async function mapBOMToProductsNet(supabase: any, bom: BomLine[]): Promise<any[]
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === 'OPTIONS') return handleOptions();
 
   try {
     const { projectType, estimatedSize, signals = {}, complexity } = await req.json();
+    
+    // Normaliser customer_supplied til array
+    const normalizedSignals = { 
+      ...signals, 
+      customer_supplied: normalizeCustomerSupplied(signals.customer_supplied) 
+    };
     
     console.log(`🔧 Material lookup: ${projectType}, size=${estimatedSize}`);
 
@@ -52,8 +52,8 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Generér BOM
-    const bom = generateProjectBOM(projectType, estimatedSize, complexity || 'medium', signals);
+    // Generér BOM med normaliserede signals
+    const bom = generateProjectBOM(projectType, estimatedSize, complexity || 'medium', normalizedSignals);
     console.log(`Generated BOM with ${bom.length} components`);
 
     // Map til produkter
@@ -62,23 +62,15 @@ serve(async (req) => {
     
     console.log(`✅ Materials NET total: ${netTotal.toFixed(2)} kr`);
 
-    return new Response(JSON.stringify({
+    return ok({
       materials_net: materialsNet,
       net_total_cost: netTotal,
       project_type: projectType,
       estimated_size: estimatedSize
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
 
   } catch (error) {
     console.error('❌ Material lookup error:', error);
-    return new Response(JSON.stringify({ 
-      error: 'Material lookup failed',
-      details: (error as any)?.message
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    });
+    return err(error);
   }
 });
