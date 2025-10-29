@@ -40,6 +40,7 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
   const [generationStep, setGenerationStep] = useState<'idle'|'analyzing'|'pricing'|'saving'|'done'|'error'>('idle');
   const [serverQuote, setServerQuote] = useState<any>(null);
   const [previewRates, setPreviewRates] = useState({ labor: 595, vehicle: 65, vat: 0.25, material_markup: 0.40 });
+  const [saleMatWithFloor, setSaleMatWithFloor] = useState<number | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -145,25 +146,44 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
     ));
   };
 
-  const getTotalMaterialCost = () => {
-    // Materials from material-lookup have net_unit_price and net_total_price
-    const netTotal = materials.reduce((sum, m: any) => {
+  const getPreviewMaterialSaleNoFloor = () => {
+    const netTotal = materials.reduce((sum: number, m: any) => {
       const qty = Number(m.quantity ?? 1);
       const netUnit = Number(m.net_unit_price ?? m.unit_price ?? 0);
-      const netTotal = Number(m.net_total_price ?? (netUnit * qty));
-      return sum + netTotal;
+      const net = Number(m.net_total_price ?? (netUnit * qty));
+      return sum + net;
     }, 0);
-    
-    // Apply markup for sale price (preview only)
-    const salePrice = netTotal * (1 + (previewRates.material_markup ?? 0.40));
-    return salePrice;
+    return netTotal * (1 + (previewRates.material_markup ?? 0.40));
   };
+
+  // Anvend materialegulv når vi har analysis
+  useEffect(() => {
+    (async () => {
+      const saleMatNoFloor = getPreviewMaterialSaleNoFloor();
+      const size = Number(analysis?.project?.estimated_size?.value ?? analysis?.project?.estimated_size ?? 0);
+      const projectType = analysis?.project?.type ?? '';
+
+      if (!projectType || !size) { 
+        setSaleMatWithFloor(saleMatNoFloor); 
+        return; 
+      }
+
+      const { data: floor } = await supabase
+        .from('material_floors')
+        .select('base_floor, per_unit_floor')
+        .eq('project_type', projectType)
+        .maybeSingle();
+
+      const floorSale = Number(floor?.base_floor ?? 0) + Number(floor?.per_unit_floor ?? 0) * size;
+      setSaleMatWithFloor(Math.max(saleMatNoFloor, floorSale));
+    })();
+  }, [analysis, materials, previewRates.material_markup]);
 
   // Preview-beregning (kun til visning – serveren beregner rigtigt)
   const getPreviewCost = () => {
     const laborCost = hours * previewRates.labor;
     const serviceCar = hours * previewRates.vehicle;
-    const materialCost = getTotalMaterialCost();
+    const materialCost = saleMatWithFloor ?? getPreviewMaterialSaleNoFloor();
     const subtotal = laborCost + serviceCar + materialCost;
     const vat = subtotal * previewRates.vat;
     return {
@@ -366,9 +386,15 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
                         className="w-16 h-7"
                       />
                       <span className="text-muted-foreground">×</span>
-                      <span>{material.net_unit_price ?? material.unit_price} kr (NET)</span>
+                      <span>
+                        {material.net_unit_price !== undefined 
+                          ? material.net_unit_price 
+                          : material.unit_price} kr {material.net_unit_price !== undefined ? '(NET)' : '(salg)'}
+                      </span>
                       <span className="text-muted-foreground">=</span>
-                      <Badge variant="secondary">{formatCurrency(material.net_total_price ?? material.total_price)}</Badge>
+                      <Badge variant="secondary">
+                        {formatCurrency(material.net_total_price !== undefined ? material.net_total_price : material.total_price)}
+                      </Badge>
                     </div>
                   </div>
                 ))}
