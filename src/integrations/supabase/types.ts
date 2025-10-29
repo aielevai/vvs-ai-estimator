@@ -666,6 +666,9 @@ export type Database = {
           created_at: string | null
           id: string
           labor_hours: number | null
+          metadata: Json | null
+          pricing_snapshot: Json | null
+          pricing_trace: Json | null
           quote_number: string | null
           service_vehicle_cost: number | null
           status: string | null
@@ -682,6 +685,9 @@ export type Database = {
           created_at?: string | null
           id?: string
           labor_hours?: number | null
+          metadata?: Json | null
+          pricing_snapshot?: Json | null
+          pricing_trace?: Json | null
           quote_number?: string | null
           service_vehicle_cost?: number | null
           status?: string | null
@@ -698,6 +704,9 @@ export type Database = {
           created_at?: string | null
           id?: string
           labor_hours?: number | null
+          metadata?: Json | null
+          pricing_snapshot?: Json | null
+          pricing_trace?: Json | null
           quote_number?: string | null
           service_vehicle_cost?: number | null
           status?: string | null
