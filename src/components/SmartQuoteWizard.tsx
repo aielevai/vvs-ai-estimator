@@ -65,7 +65,7 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
           supplier_item_id: line.material_code || '',
           description: line.description,
           quantity: line.quantity,
-          unit: 'stk',
+          unit: line.unit || 'stk',
           unit_price: line.unit_price,
           total_price: line.total_price
         })) || [];
@@ -163,13 +163,25 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
   };
 
   const getPreviewMaterialSaleNoFloor = () => {
-    const netTotal = materials.reduce((sum: number, m: any) => {
+    let netTotal = 0;    // beløb der mangler avance
+    let saleTotal = 0;   // beløb der allerede er med avance
+
+    for (const m of materials as any[]) {
       const qty = Number(m.quantity ?? 1);
-      const netUnit = Number(m.net_unit_price ?? m.unit_price ?? 0);
-      const net = Number(m.net_total_price ?? (netUnit * qty));
-      return sum + net;
-    }, 0);
-    return netTotal * (1 + (previewRates.material_markup ?? 0.40));
+      const hasNet = typeof m.net_unit_price === 'number' || typeof m.net_total_price === 'number';
+      const hasSale = typeof m.unit_price === 'number' || typeof m.total_price === 'number';
+
+      if (hasNet) {
+        const net = Number(m.net_total_price ?? (Number(m.net_unit_price ?? 0) * qty));
+        netTotal += net;
+      } else if (hasSale) {
+        const sale = Number(m.total_price ?? (Number(m.unit_price ?? 0) * qty));
+        saleTotal += sale;
+      }
+    }
+
+    const markup = 1 + (previewRates.material_markup ?? 0.40);
+    return netTotal * markup + saleTotal;        // avance KUN på net, ikke på sale
   };
 
   // Anvend materialegulv når vi har analysis
