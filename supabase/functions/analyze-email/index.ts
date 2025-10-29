@@ -189,20 +189,16 @@ serve(async (req) => {
     // Kundeleveret heuristik + kælder-signal
     const text = cleanContent.toLowerCase();
     if (!(aiResult as any).signals) (aiResult as any).signals = {};
-    (aiResult as any).signals.customer_supplied = {
-      wc_bowl: true,
-      flush_plate: true,
-      faucets: true
-    };
+    
+    // Default: alle kundeleveret (som array)
+    let suppliedItems = ['wc_bowl', 'flush_plate', 'faucets'];
     
     // Hvis kunden faktisk giver VVS-nr, slår vi kundeleveret fra
     if (/\b(vvs[- ]?nr|vvs[- ]?nummer|ean|varenr)\b/.test(text)) {
-      (aiResult as any).signals.customer_supplied = { 
-        wc_bowl: false, 
-        flush_plate: false, 
-        faucets: false 
-      };
+      suppliedItems = [];  // Ingenting er kundeleveret
     }
+    
+    (aiResult as any).signals.customer_supplied = suppliedItems;
     
     (aiResult as any).signals.basement = /\bkælder\b/.test(text) || 
       (aiResult as any).project?.description?.toLowerCase?.().includes('kælder');
