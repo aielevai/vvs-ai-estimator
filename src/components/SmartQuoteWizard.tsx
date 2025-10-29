@@ -139,9 +139,10 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
     return materials.reduce((sum, m) => sum + (m.total_price || 0), 0);
   };
 
-  const getTotalCost = () => {
-    const laborCost = hours * 550;
-    const serviceCar = 650; // Fixed proper service car cost
+  // Calculate preview costs (NOT used for actual quote creation)
+  const getPreviewCost = () => {
+    const laborCost = hours * 595;
+    const serviceCar = hours * 65;
     const materialCost = getTotalMaterialCost();
     const subtotal = laborCost + serviceCar + materialCost;
     const vat = subtotal * 0.25;
@@ -158,159 +159,35 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
   const handleCreateQuote = async () => {
     setLoading(true);
     try {
-      const costs = getTotalCost();
-      
-      // Import supabase at the top if needed
-      const { supabase } = await import('@/integrations/supabase/client');
+      // Use calculate-quote edge function instead of manual calculation
+      const quoteResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/calculate-quote', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
+        },
+        body: JSON.stringify({
+          caseId: caseData.id
+        })
+      });
 
-      if (existingQuote) {
-        // UPDATE existing quote
-        const { error: quoteError } = await supabase
-          .from('quotes')
-          .update({
-            labor_hours: hours,
-            subtotal: costs.subtotal,
-            vat_amount: costs.vat,
-            total_amount: costs.total,
-            travel_cost: 0,
-            service_vehicle_cost: costs.serviceCar,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', existingQuote.id);
-
-        if (quoteError) throw quoteError;
-
-        // Delete old quote lines
-        const { error: deleteError } = await supabase
-          .from('quote_lines')
-          .delete()
-          .eq('quote_id', existingQuote.id);
-
-        if (deleteError) throw deleteError;
-
-        // Create new quote lines
-        const quoteLines = [
-          {
-            quote_id: existingQuote.id,
-            line_type: 'labor',
-            description: `Arbejde - ${analysis?.project?.type || 'VVS arbejde'}`,
-            quantity: hours,
-            unit_price: 550,
-            total_price: costs.laborCost,
-            labor_hours: hours,
-            sort_order: 1
-          },
-          {
-            quote_id: existingQuote.id,
-            line_type: 'service_vehicle',
-            description: 'Servicebil',
-            quantity: 1,
-            unit_price: costs.serviceCar,
-            total_price: costs.serviceCar,
-            sort_order: 2
-          },
-          ...materials.map((m, idx) => ({
-            quote_id: existingQuote.id,
-            line_type: 'material' as const,
-            description: m.description,
-            quantity: m.quantity,
-            unit_price: m.unit_price,
-            total_price: m.total_price,
-            material_code: m.supplier_item_id,
-            sort_order: idx + 3
-          }))
-        ];
-
-        const { error: linesError } = await supabase
-          .from('quote_lines')
-          .insert(quoteLines);
-
-        if (linesError) throw linesError;
-
-        toast({
-          title: "✅ Tilbud Opdateret",
-          description: "Tilbuddet er blevet opdateret"
-        });
-      } else {
-        // CREATE new quote
-        const quoteNumber = `VVS-${Date.now().toString().slice(-6)}`;
-        
-        const { data: quote, error: quoteError } = await supabase
-          .from('quotes')
-          .insert({
-            case_id: caseData.id,
-            quote_number: quoteNumber,
-            subtotal: costs.subtotal,
-            vat_amount: costs.vat,
-            total_amount: costs.total,
-            labor_hours: hours,
-            travel_cost: 0,
-            service_vehicle_cost: costs.serviceCar,
-            status: 'draft',
-            valid_until: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-          })
-          .select()
-          .single();
-
-        if (quoteError) throw quoteError;
-
-        // Create quote lines
-        const quoteLines = [
-          {
-            quote_id: quote.id,
-            line_type: 'labor',
-            description: `Arbejde - ${analysis.project.type}`,
-            quantity: hours,
-            unit_price: 550,
-            total_price: costs.laborCost,
-            labor_hours: hours,
-            sort_order: 1
-          },
-          {
-            quote_id: quote.id,
-            line_type: 'service_vehicle',
-            description: 'Servicebil',
-            quantity: 1,
-            unit_price: costs.serviceCar,
-            total_price: costs.serviceCar,
-            sort_order: 2
-          },
-          ...materials.map((m, idx) => ({
-            quote_id: quote.id,
-            line_type: 'material' as const,
-            description: m.description,
-            quantity: m.quantity,
-            unit_price: m.unit_price,
-            total_price: m.total_price,
-            material_code: m.supplier_item_id,
-            sort_order: idx + 3
-          }))
-        ];
-
-        const { error: linesError } = await supabase
-          .from('quote_lines')
-          .insert(quoteLines);
-
-        if (linesError) throw linesError;
-
-        // Update case status
-        await supabase
-          .from('cases')
-          .update({ status: 'quoted' })
-          .eq('id', caseData.id);
-
-        toast({
-          title: "✅ Tilbud Oprettet",
-          description: `Tilbud ${quoteNumber} er gemt som draft`
-        });
+      if (!quoteResponse.ok) {
+        throw new Error('Quote calculation failed');
       }
+
+      const quoteResult = await quoteResponse.json();
+
+      toast({
+        title: "✅ Tilbud Genereret",
+        description: `Tilbud oprettet med ${quoteResult.lines?.length || 0} linjer (${formatCurrency(quoteResult.quote.total_amount)})`
+      });
 
       onComplete();
     } catch (error) {
       console.error('Quote creation error:', error);
       toast({
         title: "Fejl",
-        description: existingQuote ? "Kunne ikke opdatere tilbud" : "Kunne ikke oprette tilbud",
+        description: "Kunne ikke generere tilbud",
         variant: "destructive"
       });
     } finally {
@@ -347,7 +224,7 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
     );
   }
 
-  const costs = getTotalCost();
+  const costs = getPreviewCost();
 
   return (
     <div className="space-y-6">

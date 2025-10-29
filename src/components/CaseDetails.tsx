@@ -29,7 +29,8 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
   const handleAnalyze = async () => {
     setAnalyzing(true);
     try {
-      const response = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/analyze-email', {
+      // Step 1: Run AI analysis
+      const analyzeResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/analyze-email', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -41,11 +42,11 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
         })
       });
 
-      if (!response.ok) {
+      if (!analyzeResponse.ok) {
         throw new Error('AI analysis failed');
       }
 
-      const analysisResult = await response.json();
+      const analysisResult = await analyzeResponse.json();
 
       // Update case with analysis
       await db.updateCase(caseData.id, {
@@ -54,16 +55,39 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
       });
 
       toast({
-        title: "AI Analyse Færdig",
-        description: "Sagen er nu analyseret og klar til tilbudsgenerering"
+        title: "✅ AI Analyse Færdig",
+        description: "Starter nu tilbudsberegning..."
+      });
+
+      // Step 2: Automatically generate quote using calculate-quote edge function
+      const quoteResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/calculate-quote', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
+        },
+        body: JSON.stringify({
+          caseId: caseData.id
+        })
+      });
+
+      if (!quoteResponse.ok) {
+        throw new Error('Quote calculation failed');
+      }
+
+      const quoteResult = await quoteResponse.json();
+
+      toast({
+        title: "✅ Tilbud Genereret",
+        description: `Tilbud oprettet med ${quoteResult.lines?.length || 0} linjer`
       });
 
       onUpdate();
     } catch (error) {
-      console.error('Analysis failed:', error);
+      console.error('Analysis/Quote generation failed:', error);
       toast({
         title: "Fejl",
-        description: "AI analyse fejlede",
+        description: error instanceof Error ? error.message : "Kunne ikke generere tilbud",
         variant: "destructive"
       });
     } finally {
