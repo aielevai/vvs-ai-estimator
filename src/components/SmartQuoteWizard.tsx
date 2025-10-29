@@ -39,7 +39,7 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationStep, setGenerationStep] = useState<'idle'|'analyzing'|'pricing'|'saving'|'done'|'error'>('idle');
   const [serverQuote, setServerQuote] = useState<any>(null);
-  const [previewRates, setPreviewRates] = useState({ labor: 595, vehicle: 65, vat: 0.25 });
+  const [previewRates, setPreviewRates] = useState({ labor: 595, vehicle: 65, vat: 0.25, material_markup: 0.40 });
   const { toast } = useToast();
 
   useEffect(() => {
@@ -50,7 +50,8 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
         setPreviewRates({ 
           labor: Number(data.hourly_rate_labor ?? 595), 
           vehicle: Number(data.hourly_rate_vehicle ?? 65),
-          vat: Number(data.vat_rate ?? 0.25)
+          vat: Number(data.vat_rate ?? 0.25),
+          material_markup: Number(data.material_markup ?? 0.40)
         });
       }
     })();
@@ -87,7 +88,8 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
       const analyzeRes = await supabase.functions.invoke('analyze-email', {
         body: {
           emailContent: caseData.description,
-          subject: caseData.subject
+          subject: caseData.subject,
+          caseId: caseData.id
         }
       });
 
@@ -110,7 +112,8 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
       });
 
       if (!materialRes.error && materialRes.data) {
-        setMaterials(materialRes.data.materials || []);
+        const mats = materialRes.data.materials_net ?? materialRes.data.materials ?? [];
+        setMaterials(mats);
       }
 
       setStep('review');
@@ -143,7 +146,17 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
   };
 
   const getTotalMaterialCost = () => {
-    return materials.reduce((sum, m) => sum + (m.total_price || 0), 0);
+    // Materials from material-lookup have net_unit_price and net_total_price
+    const netTotal = materials.reduce((sum, m: any) => {
+      const qty = Number(m.quantity ?? 1);
+      const netUnit = Number(m.net_unit_price ?? m.unit_price ?? 0);
+      const netTotal = Number(m.net_total_price ?? (netUnit * qty));
+      return sum + netTotal;
+    }, 0);
+    
+    // Apply markup for sale price (preview only)
+    const salePrice = netTotal * (1 + (previewRates.material_markup ?? 0.40));
+    return salePrice;
   };
 
   // Preview-beregning (kun til visning – serveren beregner rigtigt)
@@ -197,7 +210,7 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
       setGenerationStep('saving');
       // Edge function har allerede gemt quote + quote_lines
       setServerQuote(quoteResult.quote ?? null);
-      setHours(quoteResult.laborHours ?? quoteResult.quote?.labor_hours ?? hours); // ← vis servertimer
+      if (typeof quoteResult.laborHours === 'number') setHours(quoteResult.laborHours);
       setGenerationStep('done');
 
       // Standardiserede feltnavne fra backend
@@ -353,9 +366,9 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
                         className="w-16 h-7"
                       />
                       <span className="text-muted-foreground">×</span>
-                      <span>{material.unit_price} kr</span>
+                      <span>{material.net_unit_price ?? material.unit_price} kr (NET)</span>
                       <span className="text-muted-foreground">=</span>
-                      <Badge variant="secondary">{formatCurrency(material.total_price)}</Badge>
+                      <Badge variant="secondary">{formatCurrency(material.net_total_price ?? material.total_price)}</Badge>
                     </div>
                   </div>
                 ))}
