@@ -1,4 +1,4 @@
-// FASE 5: Calculate-quote med prisbog-tillæg og korrekt minimum-logik
+// ROBUST GENERIC QUOTE CALCULATOR - Multi-Type Support
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
@@ -21,7 +21,7 @@ function roundHalf(n: number) {
   return Math.round(n * 2) / 2;
 }
 
-// FASE 5: Prisbog - deterministiske tillæg
+// Prisbog - deterministiske tillæg
 function evaluatePricingRules(
   signals: any,
   complexity: string,
@@ -63,15 +63,6 @@ function evaluatePricingRules(
     });
   }
 
-  if (projectType === 'district_heating' && signals?.hot_work) {
-    rules.push({
-      description: 'Varmetillæg',
-      amount: 600,
-      calculation: 'fast pr job',
-      rule_id: 'HOT_WORK'
-    });
-  }
-
   return rules;
 }
 
@@ -90,7 +81,7 @@ serve(async (req) => {
       });
     }
 
-    console.log('Calculating quote for case:', caseId);
+    console.log('📊 Calculating quote for case:', caseId);
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -102,7 +93,7 @@ serve(async (req) => {
       .select('*')
       .order('effective_from', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     // Get case data
     const { data: caseData, error: caseError } = await supabase
@@ -120,27 +111,30 @@ serve(async (req) => {
 
     const analysis = caseData.extracted_data;
     if (!analysis?.project) {
-      return new Response(JSON.stringify({ error: 'No analysis data' }), {
+      return new Response(JSON.stringify({ error: 'No analysis data - run analyze-email first' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
 
-    // Get profile
+    // Get profile (ny tabel: pricing_profiles_v2)
     const { data: profile } = await supabase
-      .from('pricing_profiles')
+      .from('pricing_profiles_v2')
       .select('*')
       .eq('project_type', analysis.project.type)
-      .single();
+      .maybeSingle();
 
     if (!profile) {
-      return new Response(JSON.stringify({ error: 'Profile not found' }), {
+      console.error(`No profile for type: ${analysis.project.type}`);
+      return new Response(JSON.stringify({ error: `Profile not found for ${analysis.project.type}` }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
 
-    // Get historical data
+    console.log('📐 Profile loaded:', { type: analysis.project.type, base_hours: profile.base_hours, beta: profile.beta_default });
+
+    // Historical data (optional)
     let historicalData: any = null;
     try {
       const histResp = await supabase.functions.invoke('historical-analysis', {
@@ -148,32 +142,38 @@ serve(async (req) => {
           projectType: analysis.project.type,
           size: analysis.project.estimated_size?.value ?? profile.average_size,
           complexity: complexityToNumeric(analysis.project.complexity ?? 'medium'),
-          signals: analysis.project
+          signals: analysis.signals ?? {}
         }
       });
       if (histResp.data) historicalData = histResp.data;
     } catch (e) {
-      console.log('Historical analysis skipped:', e);
+      console.log('⚠️  Historical analysis skipped:', e);
     }
 
-    const size = Number(analysis.project.estimated_size?.value ?? profile.average_size);
+    const size = Number(analysis.project.estimated_size?.value ?? analysis.project.estimated_size ?? profile.average_size);
     const base = Number(profile.base_hours);
     const ref = Number(profile.average_size);
     const beta = Number(historicalData?.analysis?.beta ?? profile.beta_default ?? 1.0);
     const H = Number(historicalData?.analysis?.historical_factor ?? 1.0);
     const c = complexityToNumeric(analysis.project.complexity ?? 'medium');
 
-    // 1) Timer
-    let hours_raw = base * Math.pow(size / ref, beta);
-    let hours_adj = hours_raw * c * H;
-    const hours = roundHalf(clamp(hours_adj, Number(profile.min_hours), Number(profile.max_hours)));
+    console.log('🧮 Hour calculation:', { size, base, ref, beta, H, complexity: c });
 
-    // Hent config parametre
+    // 1) Timer - KORREKT FORMEL (41h for 12m² badeværelse)
+    const hours_raw = base * Math.pow(size / ref, beta);
+    let hours_adj = hours_raw * c * H;
+    
+    // Clamp to profile limits
+    const hours = roundHalf(clamp(hours_adj, Number(profile.min_labor_hours), Number(profile.max_hours ?? 999)));
+
+    console.log(`⏱️  Hours: raw=${hours_raw.toFixed(2)}, adjusted=${hours_adj.toFixed(2)}, final=${hours}`);
+
+    // Config parametre
     const VAT = Number(config?.vat_rate ?? 0.25);
     const MARKUP = Number(config?.material_markup ?? 0.40);
     const MODE = String(config?.timesats_mode ?? 'split');
 
-    // 2) Arbejdsløn + vogn baseret på mode
+    // 2) Arbejdsløn + vogn
     let laborRate = Number(config?.hourly_rate_labor ?? 595);
     let vehicleRate = Number(config?.hourly_rate_vehicle ?? 65);
     
@@ -184,38 +184,43 @@ serve(async (req) => {
     
     const minLaborHours = Number(profile.min_labor_hours ?? 0);
     const laborCost = Math.max(hours * laborRate, minLaborHours * laborRate);
-    const vehicleCost = roundHalf(hours) * vehicleRate;
+    const vehicleCost = hours * vehicleRate;
 
-    // 3) Materialer fra material-lookup (ALTID NET priser)
+    console.log('💰 Labor:', { hours, laborRate, laborCost, vehicleRate, vehicleCost });
+
+    // 3) Materialer via material-lookup (returnerer NET priser)
     let materialResp: any = null;
     try {
       materialResp = await supabase.functions.invoke('material-lookup', {
         body: {
           projectType: analysis.project.type,
           estimatedSize: size,
-          signals: analysis.signals,
+          signals: analysis.signals ?? {},
           materialeAnalyse: analysis.materiale_analyse,
           complexity: analysis.project.complexity
         }
       });
     } catch (e) {
-      console.error('Material lookup failed:', e);
+      console.error('❌ Material lookup failed:', e);
     }
 
     const materials_net = materialResp?.data?.materials_net ?? [];
-    
-    // Hent materiale-gulv og håndhæv det på SALG-niveau (net × 1,4)
+    console.log(`🔧 Materials (NET): ${materials_net.length} items`);
+
+    // Hent materialegulv
     const { data: floor } = await supabase
       .from('material_floors')
       .select('*')
       .eq('project_type', analysis.project.type)
-      .single();
+      .maybeSingle();
     
     const matFloorSale = (Number(floor?.base_floor ?? 0) + Number(floor?.per_unit_floor ?? 0) * size);
+    console.log(`📏 Material floor (SALE): ${matFloorSale} (base=${floor?.base_floor}, per_unit=${floor?.per_unit_floor})`);
 
-    // Byg salgs-linjer med avance (40% markup)
+    // Byg salgslinjer med markup (40%) - KUN på NET, ikke på kundeleveret
     const materials_lines = materials_net.map((m: any) => {
-      const sale_unit = m.net_unit_price * (m.customer_supplied ? 0 : (1 + MARKUP));
+      const isCustomerSupplied = !!m.customer_supplied;
+      const sale_unit = m.net_unit_price * (isCustomerSupplied ? 0 : (1 + MARKUP));
       const sale_total = sale_unit * m.quantity;
       return {
         line_type: 'material',
@@ -225,14 +230,17 @@ serve(async (req) => {
         unit_price: sale_unit,
         total_price: sale_total,
         material_code: m.product_code,
-        customer_supplied: !!m.customer_supplied
+        customer_supplied: isCustomerSupplied,
+        component_key: m.component_key,
+        source: 'bom'
       };
     });
     
     let materialsTotal = materials_lines.reduce((s: number, x: any) => s + x.total_price, 0);
     
-    // Gulv (salg) – hvis under, løft kritiske komponenter proportionelt
+    // Håndhæv materialegulv (salg) - løft kritiske komponenter proportionelt
     if (materialsTotal < matFloorSale && materialsTotal > 0) {
+      console.log(`⬆️  Applying material floor: ${materialsTotal} -> ${matFloorSale}`);
       const factor = matFloorSale / materialsTotal;
       materials_lines.forEach((l: any) => { 
         if (!l.customer_supplied) { 
@@ -243,6 +251,8 @@ serve(async (req) => {
       materialsTotal = materials_lines.reduce((s: number, x: any) => s + x.total_price, 0);
     }
 
+    console.log(`💎 Materials (SALE): ${materialsTotal.toFixed(2)}`);
+
     // 4) Prisbog - deterministiske tillæg
     const surcharges = evaluatePricingRules(
       analysis.signals ?? {},
@@ -252,7 +262,9 @@ serve(async (req) => {
     );
     const surchargeTotal = surcharges.reduce((s, x) => s + x.amount, 0);
 
-    // 5) Projektminimum (kun hvis type-flag er true, og kun på (arbejde+vogn+tilæg))
+    console.log(`➕ Surcharges: ${surcharges.length} items, total=${surchargeTotal}`);
+
+    // 5) Projektminimum (kun hvis profile flag = true, kun på arbejde+vogn+tillæg)
     const subtotalExMaterials = laborCost + vehicleCost + surchargeTotal;
     const projectMinimum = Number(config?.minimum_project ?? 4500);
     let minimumLine: any = null;
@@ -261,6 +273,7 @@ serve(async (req) => {
         description: 'Projektminimum', 
         amount: projectMinimum - subtotalExMaterials 
       };
+      console.log(`📌 Project minimum applied: ${minimumLine.amount}`);
     }
 
     // 6) Byg linjer
@@ -273,7 +286,8 @@ serve(async (req) => {
         quantity: hours,
         unit: 'time',
         unit_price: laborRate,
-        total_price: Math.max(hours * laborRate, minLaborHours * laborRate)
+        total_price: laborCost,
+        labor_hours: hours
       });
     } else {
       lines.push({
@@ -282,7 +296,8 @@ serve(async (req) => {
         quantity: hours,
         unit: 'time',
         unit_price: laborRate,
-        total_price: laborCost
+        total_price: laborCost,
+        labor_hours: hours
       });
       if (vehicleRate > 0) {
         lines.push({
@@ -325,7 +340,35 @@ serve(async (req) => {
     const vat = subtotal * VAT;
     const total = subtotal + vat;
 
-    // 9) Gem quote
+    console.log(`💵 Totals: subtotal=${subtotal.toFixed(2)}, vat=${vat.toFixed(2)}, total=${total.toFixed(2)}`);
+
+    // 8) Pricing snapshot (gem config på quote for historisk reproduktion)
+    const pricing_snapshot = {
+      hourly_rate_labor: laborRate,
+      hourly_rate_vehicle: vehicleRate,
+      material_markup: MARKUP,
+      vat_rate: VAT,
+      minimum_project: projectMinimum,
+      timesats_mode: MODE,
+      material_floor: { base: floor?.base_floor, per_unit: floor?.per_unit_floor }
+    };
+
+    // 9) Pricing trace (debug-info)
+    const pricing_trace = {
+      timestamp: new Date().toISOString(),
+      profile_used: { project_type: profile.project_type, base_hours: base, average_size: ref, beta },
+      size_input: size,
+      hours_calculation: { raw: hours_raw, adjusted: hours_adj, final: hours, H, complexity: c },
+      materials: { 
+        net_items: materials_net.length, 
+        sale_total: materialsTotal, 
+        floor_applied: materialsTotal >= matFloorSale ? null : matFloorSale 
+      },
+      surcharges,
+      minimum_applied: !!minimumLine
+    };
+
+    // 10) Gem quote
     const quoteNumber = `Q-${Date.now()}`;
     const validUntil = new Date();
     validUntil.setDate(validUntil.getDate() + 30);
@@ -341,20 +384,29 @@ serve(async (req) => {
         labor_hours: hours,
         service_vehicle_cost: vehicleCost,
         status: 'draft',
-        valid_until: validUntil.toISOString().split('T')[0]
+        valid_until: validUntil.toISOString().split('T')[0],
+        pricing_snapshot,
+        pricing_trace,
+        metadata: {
+          project_type: analysis.project.type,
+          estimated_size: size,
+          complexity: analysis.project.complexity
+        }
       })
       .select()
       .single();
 
     if (quoteError) {
-      console.error('Failed to create quote:', quoteError);
-      return new Response(JSON.stringify({ error: 'Failed to create quote' }), {
+      console.error('❌ Failed to create quote:', quoteError);
+      return new Response(JSON.stringify({ error: 'Failed to create quote', details: quoteError }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
 
-    // Gem linjer
+    console.log(`✅ Quote created: ${quote.quote_number}`);
+
+    // 11) Gem linjer
     const linesWithQuoteId = lines.map((l, idx) => ({
       ...l,
       quote_id: quote.id,
@@ -364,50 +416,30 @@ serve(async (req) => {
     const { error: linesError } = await supabase.from('quote_lines').insert(linesWithQuoteId);
 
     if (linesError) {
-      console.error('Failed to create quote lines:', linesError);
+      console.error('❌ Failed to create quote lines:', linesError);
+      return new Response(JSON.stringify({ error: 'Failed to save quote lines', details: linesError }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
     }
 
-    // Forklaringsblob
-    const calculation_explanation = {
-      reference: { base_hours: base, average_size: ref, beta, H, complexity: c },
-      size_used: size,
-      hours: { raw: hours_raw, adjusted: hours, min: profile.min_hours, max: profile.max_hours },
-      timesats: MODE === 'all_in' ? { all_in: laborRate } : { labor: laborRate, vehicle: vehicleRate },
-      labor: { min_labor_hours: minLaborHours, laborCost },
-      vehicle: { vehicleCost },
-      materials: { 
-        lines: materials_lines.length, 
-        sale_total: materialsTotal, 
-        markup: MARKUP,
-        floor_applied: materialsTotal >= matFloorSale ? null : matFloorSale
-      },
-      surcharges,
-      minimum_applied: !!minimumLine
-    };
+    console.log(`✅ Saved ${linesWithQuoteId.length} quote lines`);
 
+    // 12) Returnér standardiseret struktur
     return new Response(
       JSON.stringify({
         quote,
-        quote_lines: linesWithQuoteId,
-        calculation_explanation,
-        pricing_analysis: {
-          project_type: analysis.project.type,
-          estimated_size: size,
-          complexity: analysis.project.complexity,
-          hours,
-          materials_total: materialsTotal,
-          surcharges_total: surchargeTotal,
-          subtotal,
-          vat,
-          total
-        }
+        lines: linesWithQuoteId,
+        total,
+        laborHours: hours,
+        calculation_explanation: pricing_trace
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       }
     );
   } catch (error) {
-    console.error('Calculate quote error:', error);
+    console.error('💥 Calculate quote error:', error);
     return new Response(
       JSON.stringify({
         error: 'Quote calculation failed',

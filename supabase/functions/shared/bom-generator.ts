@@ -1,190 +1,187 @@
-// BOM (Bill of Materials) generator - deterministisk stykliste pr projekttype
+// BOM Generator for VVS Projects - Generic Multi-Type Support (ROBUST VERSION)
 
-export interface BomLine {
-  component: string;
-  quantity: number;
-  unit: 'stk' | 'm' | 'm2' | 'sæt' | 'spand';
-  category: string;
+export type BomLine = {
+  componentKey: string;        // matches components.key in DB
+  qty: number;
+  unit: 'stk'|'m'|'sæt'|'zone'|'ltr';
   critical: boolean;
-  customer_supplied?: boolean;
-}
-
-// Affaldsprocenter pr kategori
-const WASTE_FACTORS: Record<string, number> = {
-  'pipe': 1.10,      // 10% affald
-  'fittings': 1.05,  // 5% affald
-  'floor': 1.15,     // 15% affald
-  'tiles': 1.15,     // 15% affald
-  'default': 1.10    // 10% default
+  customerSupplied?: boolean;
 };
 
-function applyWaste(qty: number, category: string): number {
-  const factor = WASTE_FACTORS[category] || WASTE_FACTORS.default;
-  return Math.ceil(qty * factor);
+const WASTE_FACTORS: Record<string, number> = {
+  rør: 0.10,
+  fittings: 0.05,
+  armatur: 0.02,
+  gulvvarme: 0.08,
+  default: 0.05,
+};
+
+function applyWaste(quantity: number, category: string): number {
+  const wasteFactor = WASTE_FACTORS[category] || WASTE_FACTORS.default;
+  return Math.ceil(quantity * (1 + wasteFactor));
 }
 
-// BOM regler pr projekttype
 const BOM_RULES: Record<string, (size: number, complexity: string, signals: any) => BomLine[]> = {
-  bathroom_renovation: (size: number, complexity: string, signals: any) => {
+  bathroom_renovation: (size, complexity, signals) => {
     const lines: BomLine[] = [];
-    const s = Math.max(1, Number(size) || 1);
-    const waste = 0.12;
+    const customerSupplied = signals.customer_supplied || [];
     
-    // Afløb – Unidrain linje + kælder-specifikt lavt udløbshus
-    lines.push({ component: 'unidrain_linjeafløb', category: 'afløb', unit: 'stk', quantity: 1, critical: true });
-    if (signals?.basement) {
-      lines.push({ component: 'unidrain_ø50_lavt_udløbshus', category: 'afløb', unit: 'stk', quantity: 1, critical: true });
+    // Afløb - altid kritisk
+    lines.push({ componentKey: 'unidrain_line', qty: 1, unit: 'stk', critical: true });
+    lines.push({ componentKey: 'unidrain_low_outlet_ø50', qty: 1, unit: 'stk', critical: true });
+    
+    // PEX rør baseret på størrelse (~9m per m²)
+    const pexLength = Math.ceil(size * 9);
+    lines.push({ componentKey: 'pex_15', qty: applyWaste(pexLength, 'rør'), unit: 'm', critical: true });
+    
+    // Fordeler og ventiler
+    lines.push({ componentKey: 'manifold_small', qty: 1, unit: 'stk', critical: true });
+    const ballofixQty = Math.max(6, Math.ceil(size / 2));
+    lines.push({ componentKey: 'ballofix', qty: ballofixQty, unit: 'stk', critical: true });
+    
+    // WC indbygning (kun hvis ikke kundeleveret)
+    if (!customerSupplied.includes('wc_bowl')) {
+      lines.push({ componentKey: 'geberit_duofix_cistern', qty: 1, unit: 'stk', critical: true });
     }
-    lines.push({ component: 'afløbsrør_fittings', category: 'afløb', unit: 'sæt', quantity: 1, critical: true });
     
-    // Brugsvand PEX
-    lines.push({ component: 'pex_15mm', category: 'rør', unit: 'm', quantity: Math.ceil(s * 8 * (1 + waste)), critical: true });
-    lines.push({ component: 'fordeler', category: 'rør', unit: 'stk', quantity: 1, critical: true });
-    lines.push({ component: 'ballofix_beslag', category: 'rør', unit: 'stk', quantity: Math.max(6, Math.ceil(s / 2)), critical: true });
+    // Afløbsrør og fittings
+    lines.push({ componentKey: 'drain_pipes_fittings', qty: 1, unit: 'sæt', critical: true });
     
-    // Duofix-ramme + cisterne (skål/trykplade kundeleveret som standard)
-    lines.push({ component: 'geberit_duofix_cisterne', category: 'sanitær', unit: 'stk', quantity: 1, critical: true });
-    lines.push({ 
-      component: 'wc_skål', category: 'sanitær', unit: 'stk', quantity: 1, critical: false,
-      customer_supplied: signals?.customer_supplied?.wc_bowl !== false 
-    });
-    lines.push({ 
-      component: 'trykplade', category: 'sanitær', unit: 'stk', quantity: 1, critical: false,
-      customer_supplied: signals?.customer_supplied?.flush_plate !== false 
-    });
+    // Småmateriel
+    lines.push({ componentKey: 'consumables_small', qty: 1, unit: 'sæt', critical: true });
     
-    // Armaturer (kundeleveret som standard)
-    lines.push({ 
-      component: 'armatur_håndvask', category: 'armatur', unit: 'stk', quantity: 1, critical: false,
-      customer_supplied: signals?.customer_supplied?.faucets !== false 
-    });
-    lines.push({ 
-      component: 'armatur_bruser', category: 'armatur', unit: 'stk', quantity: 1, critical: false,
-      customer_supplied: signals?.customer_supplied?.faucets !== false 
-    });
+    // Kørsel og affald
+    lines.push({ componentKey: 'haulage_waste', qty: 1, unit: 'sæt', critical: false });
     
-    // Forbrug/vådrum (VVS-del)
-    lines.push({ component: 'småmateriel_beslag', category: 'diverse', unit: 'sæt', quantity: 1, critical: true });
-    
-    // Kørsel/affald
-    lines.push({ component: 'kørsel_affald', category: 'diverse', unit: 'sæt', quantity: 1, critical: true });
-    
-    return lines;
-  },
-  
-  floor_heating: (size: number, complexity: string, signals: any) => {
-    const lines: BomLine[] = [];
-    
-    lines.push({ component: 'gulvvarmeslanger', quantity: applyWaste(size, 'floor'), unit: 'm2', category: 'floor_heating', critical: true });
-    lines.push({ component: 'fordelerboks', quantity: Math.ceil(size / 30), unit: 'stk', category: 'floor_heating', critical: true });
-    lines.push({ component: 'termostat', quantity: Math.ceil(size / 30), unit: 'stk', category: 'controls', critical: true });
-    lines.push({ component: 'isolering', quantity: applyWaste(size, 'floor'), unit: 'm2', category: 'insulation', critical: false });
-    lines.push({ component: 'montageskinner', quantity: applyWaste(size / 5, 'fittings'), unit: 'meter', category: 'fittings', critical: false });
-    
-    return lines;
-  },
-  
-  radiator_installation: (size: number, complexity: string, signals: any) => {
-    const lines: BomLine[] = [];
-    const units = Math.round(size); // size = antal radiatorer
-    
-    lines.push({ component: 'radiator komplet', quantity: units, unit: 'stk', category: 'radiators', critical: true });
-    lines.push({ component: 'radiatorventil', quantity: units * 2, unit: 'stk', category: 'valves', critical: true });
-    lines.push({ component: 'pex rør 16mm', quantity: applyWaste(units * 6, 'pipe'), unit: 'meter', category: 'pipe', critical: true });
-    lines.push({ component: 'koblinger pex', quantity: units * 4, unit: 'stk', category: 'fittings', critical: false });
-    lines.push({ component: 'vægkonsol radiator', quantity: units * 2, unit: 'stk', category: 'fittings', critical: false });
-    
-    return lines;
-  },
-  
-  district_heating: (size: number, complexity: string, signals: any) => {
-    const lines: BomLine[] = [];
-    
-    lines.push({ component: 'fjernvarme vekslersæt', quantity: 1, unit: 'stk', category: 'district_heating', critical: true });
-    lines.push({ component: 'fjernvarme flowmåler', quantity: 1, unit: 'stk', category: 'metering', critical: true });
-    lines.push({ component: 'isolerede rør 2x32mm', quantity: applyWaste(signals?.distance_to_main ?? 20, 'pipe'), unit: 'meter', category: 'pipe', critical: true });
-    lines.push({ component: 'jordarbejde', quantity: signals?.distance_to_main ?? 20, unit: 'meter', category: 'excavation', critical: true });
-    lines.push({ component: 'tilslutningsgebyr', quantity: 25000, unit: 'kr', category: 'fees', critical: true });
-    
-    if (signals?.hot_work) {
-      lines.push({ component: 'varmetillæg', quantity: 600, unit: 'kr', category: 'fees', critical: false });
+    // Kundeleveret - vises men prissættes 0
+    if (customerSupplied.includes('wc_bowl')) {
+      lines.push({ componentKey: 'wc_bowl', qty: 1, unit: 'stk', critical: false, customerSupplied: true });
+    }
+    if (customerSupplied.includes('flush_plate')) {
+      lines.push({ componentKey: 'flush_plate', qty: 1, unit: 'stk', critical: false, customerSupplied: true });
+    }
+    if (customerSupplied.includes('faucet_basin')) {
+      lines.push({ componentKey: 'faucet_basin', qty: 1, unit: 'stk', critical: false, customerSupplied: true });
+    }
+    if (customerSupplied.includes('faucet_shower')) {
+      lines.push({ componentKey: 'faucet_shower', qty: 1, unit: 'stk', critical: false, customerSupplied: true });
     }
     
     return lines;
   },
-  
-  pipe_installation: (size: number, complexity: string, signals: any) => {
+
+  floor_heating: (size, complexity, signals) => {
     const lines: BomLine[] = [];
-    const meters = Math.round(size);
+    const zones = Math.max(1, Math.round(size / 10)); // ~1 zone per 10m²
+    const hosePerM2 = 8; // meter slange pr. m² (cc-afstand ~125mm)
     
-    const pipeType = signals?.pipe_type || 'pex';
-    const diameter = signals?.diameter || '16mm';
+    // Gulvvarmeslange (8m/m² med waste factor)
+    const hoseLength = Math.ceil(size * hosePerM2);
+    lines.push({ componentKey: 'fh_hose_16mm', qty: applyWaste(hoseLength, 'gulvvarme'), unit: 'm', critical: true });
     
-    lines.push({ component: `${pipeType} rør ${diameter}`, quantity: applyWaste(meters, 'pipe'), unit: 'meter', category: 'pipe', critical: true });
-    lines.push({ component: `koblinger ${pipeType}`, quantity: Math.ceil(meters / 3), unit: 'stk', category: 'fittings', critical: false });
-    lines.push({ component: 'isolering rør', quantity: applyWaste(meters, 'pipe'), unit: 'meter', category: 'insulation', critical: false });
+    // Fordeler (1 pr. zone)
+    lines.push({ componentKey: 'fh_manifold', qty: zones, unit: 'zone', critical: true });
     
-    if (signals?.wall_mounting) {
-      lines.push({ component: 'rørbeslag', quantity: Math.ceil(meters / 2), unit: 'stk', category: 'fittings', critical: false });
-    }
+    // Shuntgruppe med pumpe (1 pr. installation)
+    lines.push({ componentKey: 'fh_shunt_pump_group', qty: 1, unit: 'stk', critical: true });
+    
+    // Termostater (1 pr. zone)
+    lines.push({ componentKey: 'fh_thermostat', qty: zones, unit: 'stk', critical: true });
+    
+    // Småmateriel
+    lines.push({ componentKey: 'consumables_small', qty: 1, unit: 'sæt', critical: true });
     
     return lines;
   },
-  
-  kitchen_plumbing: (size: number, complexity: string, signals: any) => {
+
+  district_heating: (size, complexity, signals) => {
     const lines: BomLine[] = [];
     
-    // Vandrør
-    lines.push({ component: 'pex rør 16mm', quantity: applyWaste(size * 2, 'pipe'), unit: 'meter', category: 'pipe', critical: true });
-    lines.push({ component: 'koblinger pex', quantity: Math.ceil(size), unit: 'stk', category: 'fittings', critical: false });
+    // Varmevekslerstation (hovedkomponent)
+    lines.push({ componentKey: 'dh_substation_hex', qty: 1, unit: 'stk', critical: true });
     
-    // Afløb
-    lines.push({ component: 'afløbsrør 50mm', quantity: applyWaste(size * 1.5, 'pipe'), unit: 'meter', category: 'pipe', critical: true });
+    // Filtre og smudssi
+    lines.push({ componentKey: 'dh_strainers_filters', qty: 1, unit: 'sæt', critical: true });
     
-    // Armatur
-    lines.push({ component: 'køkkenarmatur', quantity: 1, unit: 'stk', category: 'fixtures', critical: true });
+    // Ballofix kuglehaner (standard sæt)
+    lines.push({ componentKey: 'ballofix', qty: 6, unit: 'stk', critical: true });
     
-    if (signals?.dishwasher) {
-      lines.push({ component: 'opvaskemaskine tilslutning', quantity: 1, unit: 'stk', category: 'fixtures', critical: false });
-    }
+    // Sikkerhedsventil
+    lines.push({ componentKey: 'dh_safety_valve', qty: 1, unit: 'stk', critical: true });
     
-    if (signals?.disposal) {
-      lines.push({ component: 'affaldskværn', quantity: 1, unit: 'stk', category: 'fixtures', critical: false });
-    }
+    // Isolering
+    lines.push({ componentKey: 'insulation', qty: 1, unit: 'sæt', critical: false });
+    
+    // Småmateriel
+    lines.push({ componentKey: 'consumables_small', qty: 1, unit: 'sæt', critical: true });
     
     return lines;
   },
-  
-  service_call: (size: number, complexity: string, signals: any) => {
+
+  radiator_installation: (size, complexity, signals) => {
+    // size = antal radiatorer
+    const lines: BomLine[] = [];
+    const count = Math.max(1, size);
+    
+    lines.push({ componentKey: 'ballofix', qty: count * 2, unit: 'stk', critical: true });
+    lines.push({ componentKey: 'pex_15', qty: count * 4, unit: 'm', critical: true });
+    lines.push({ componentKey: 'consumables_small', qty: 1, unit: 'sæt', critical: true });
+    
+    return lines;
+  },
+
+  pipe_installation: (size, complexity, signals) => {
+    const lines: BomLine[] = [];
+    const length = Math.max(1, size);
+    
+    lines.push({ componentKey: 'pex_15', qty: applyWaste(length, 'rør'), unit: 'm', critical: true });
+    lines.push({ componentKey: 'ballofix', qty: Math.ceil(length / 3), unit: 'stk', critical: true });
+    lines.push({ componentKey: 'consumables_small', qty: 1, unit: 'sæt', critical: true });
+    
+    return lines;
+  },
+
+  kitchen_plumbing: (size, complexity, signals) => {
     const lines: BomLine[] = [];
     
-    // Minimal BOM for servicekald - småvarer og forbrugsstoffer
-    lines.push({ component: 'serviceforbrug', quantity: 500, unit: 'kr', category: 'consumables', critical: false });
+    // PEX rør (~6m per m²)
+    const pexLength = Math.ceil(size * 6);
+    lines.push({ componentKey: 'pex_15', qty: applyWaste(pexLength, 'rør'), unit: 'm', critical: true });
     
-    if (signals?.parts_needed) {
-      lines.push({ component: 'reservedele', quantity: 1000, unit: 'kr', category: 'parts', critical: false });
-    }
+    lines.push({ componentKey: 'manifold_small', qty: 1, unit: 'stk', critical: true });
+    lines.push({ componentKey: 'ballofix', qty: 4, unit: 'stk', critical: true });
+    lines.push({ componentKey: 'drain_pipes_fittings', qty: 1, unit: 'sæt', critical: true });
+    lines.push({ componentKey: 'consumables_small', qty: 1, unit: 'sæt', critical: true });
+    
+    return lines;
+  },
+
+  service_call: (size, complexity, signals) => {
+    const lines: BomLine[] = [];
+    
+    // Minimal BOM for serviceopkald
+    lines.push({ componentKey: 'consumables_small', qty: 1, unit: 'sæt', critical: false });
     
     return lines;
   }
 };
 
 export function generateProjectBOM(
-  projectType: string,
-  size: number,
-  complexity: string = 'medium',
+  projectType: string, 
+  size: number, 
+  complexity: string = 'medium', 
   signals: any = {}
 ): BomLine[] {
   const generator = BOM_RULES[projectType];
   if (!generator) {
-    console.warn(`No BOM generator for project type: ${projectType}`);
+    console.warn(`No BOM rules for project type: ${projectType}`);
     return [];
   }
-  
   return generator(size, complexity, signals);
 }
 
 export function getMaterialFloor(projectType: string, size: number, floorData: any): number {
-  if (!floorData) return 0;
-  return Number(floorData.base_floor ?? 0) + (Number(floorData.per_unit_floor ?? 0) * size);
+  const baseFloor = floorData?.base_floor || 0;
+  const perUnitFloor = floorData?.per_unit_floor || 0;
+  return baseFloor + (perUnitFloor * size);
 }

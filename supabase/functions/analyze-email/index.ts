@@ -34,11 +34,17 @@ Analyser denne email grundigt og returner struktureret JSON med:
 2. **project**: 
    - type: bathroom_renovation, kitchen_plumbing, pipe_installation, district_heating, floor_heating, radiator_installation, service_call
    - description: Detaljeret beskrivelse af arbejdet
-   - estimated_size: Numerisk værdi (m2, meter, antal, etc.)
-   - size_unit: m2, meter, units, connection, job
+   - estimated_size: { value: NUMERISK, unit: "m2"|"meter"|"stk" }
    - complexity: simple, medium, complex, emergency
    - urgency: normal, urgent, emergency
-   - location_details: Specifik information om stedet
+   
+3. **signals**:
+   - basement: boolean (kælder)
+   - elevator: boolean (elevator til adgang)
+   - floor: number (etage)
+   - customer_supplied: array of strings (["wc_bowl", "flush_plate", "faucet_basin", "faucet_shower"])
+   - ceiling_height: number (loftshøjde i meter)
+   - difficult_access: boolean
 
 3. **materiale_analyse**: 
    - specifikke_komponenter: Array af objekter med {komponent: string, mængde: number, enhed: string, specifikationer: string}

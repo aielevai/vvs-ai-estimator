@@ -256,12 +256,13 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
       const quoteResult = quoteRes.data;
 
       setGenerationStep('saving');
-      // Edge function har allerede gemt quote + quote_lines
       setServerQuote(quoteResult.quote ?? null);
-      // Sync UI hours to server's calculated value
+      
+      // Sync UI timer til server
       if (typeof quoteResult.laborHours === 'number') {
         setHours(quoteResult.laborHours);
       }
+      
       setGenerationStep('done');
 
       // Standardiserede feltnavne fra backend
