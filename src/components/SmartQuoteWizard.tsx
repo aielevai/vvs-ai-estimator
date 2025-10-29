@@ -73,9 +73,25 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
       setMaterials(existingMaterials);
       setHours(existingQuote.labor_hours || 8);
       
-      // Set a mock analysis for UI display
+      // Use actual values from case/quote for accurate floor calculation
+      const inferredType = 
+        caseData?.extracted_data?.project?.type || 
+        existingQuote?.metadata?.project_type || 
+        'bathroom_renovation';
+      
+      const inferredSize = Number(
+        caseData?.extracted_data?.project?.estimated_size?.value ?? 
+        caseData?.extracted_data?.project?.estimated_size ??
+        existingQuote?.metadata?.estimated_size ?? 0
+      );
+      
       setAnalysis({
-        project: { type: 'Redigering', complexity: 'medium', estimated_size: 0, size_unit: 'm2' }
+        project: { 
+          type: inferredType, 
+          complexity: caseData?.extracted_data?.project?.complexity || 'medium', 
+          estimated_size: inferredSize, 
+          size_unit: 'm2' 
+        }
       });
     } else {
       runAnalysis();
@@ -230,7 +246,10 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
       setGenerationStep('saving');
       // Edge function har allerede gemt quote + quote_lines
       setServerQuote(quoteResult.quote ?? null);
-      if (typeof quoteResult.laborHours === 'number') setHours(quoteResult.laborHours);
+      // Sync UI hours to server's calculated value
+      if (typeof quoteResult.laborHours === 'number') {
+        setHours(quoteResult.laborHours);
+      }
       setGenerationStep('done');
 
       // Standardiserede feltnavne fra backend
