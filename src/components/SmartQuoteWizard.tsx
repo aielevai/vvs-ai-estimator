@@ -35,6 +35,9 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
   const [hours, setHours] = useState<number>(existingQuote?.labor_hours || 0);
   const [materials, setMaterials] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationStep, setGenerationStep] = useState<'idle'|'analyzing'|'pricing'|'saving'|'done'|'error'>('idle');
+  const [serverQuote, setServerQuote] = useState<any>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -139,7 +142,7 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
     return materials.reduce((sum, m) => sum + (m.total_price || 0), 0);
   };
 
-  // Calculate preview costs (NOT used for actual quote creation)
+  // Preview-beregning (kun til visning – serveren beregner rigtigt)
   const getPreviewCost = () => {
     const laborCost = hours * 595;
     const serviceCar = hours * 65;
@@ -157,9 +160,31 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
   };
 
   const handleCreateQuote = async () => {
-    setLoading(true);
     try {
-      // Use calculate-quote edge function instead of manual calculation
+      setIsGenerating(true);
+      setGenerationStep('analyzing');
+
+      // 1) Kald analyze-email og gem på casen
+      const analyzeResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/analyze-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
+        },
+        body: JSON.stringify({
+          emailContent: caseData.description || caseData.email_content,
+          subject: caseData.subject,
+          caseId: caseData.id
+        })
+      });
+
+      if (!analyzeResponse.ok) {
+        throw new Error('Analyse fejlede');
+      }
+
+      setGenerationStep('pricing');
+
+      // 2) Kald calculate-quote (bruger extracted_data fra casen)
       const quoteResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/calculate-quote', {
         method: 'POST',
         headers: {
@@ -172,26 +197,32 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
       });
 
       if (!quoteResponse.ok) {
-        throw new Error('Quote calculation failed');
+        throw new Error('Tilbudsberegning fejlede');
       }
 
       const quoteResult = await quoteResponse.json();
 
+      setGenerationStep('saving');
+      // Edge function har allerede gemt quote + quote_lines
+      setServerQuote(quoteResult.quote);
+      setGenerationStep('done');
+
       toast({
         title: "✅ Tilbud Genereret",
-        description: `Tilbud oprettet med ${quoteResult.lines?.length || 0} linjer (${formatCurrency(quoteResult.quote.total_amount)})`
+        description: `Tilbud oprettet med ${quoteResult.quote_lines?.length || 0} linjer (${formatCurrency(quoteResult.quote.total_amount)})`
       });
 
       onComplete();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Quote creation error:', error);
+      setGenerationStep('error');
       toast({
-        title: "Fejl",
-        description: "Kunne ikke generere tilbud",
+        title: "Fejl ved generering",
+        description: error.message || "Kunne ikke generere tilbud",
         variant: "destructive"
       });
     } finally {
-      setLoading(false);
+      setIsGenerating(false);
     }
   };
 
@@ -355,17 +386,28 @@ export default function SmartQuoteWizard({ caseData, existingQuote, onComplete, 
               </div>
             </div>
 
+            {isGenerating && (
+              <div className="text-sm text-muted-foreground mb-4 p-3 bg-muted rounded-lg">
+                {generationStep === 'analyzing' && '🔍 Analyserer henvendelsen...'}
+                {generationStep === 'pricing' && '💰 Beregner timer, BOM, avance og gulv...'}
+                {generationStep === 'saving' && '💾 Gemmer tilbud og linjer...'}
+                {generationStep === 'done' && '✅ Færdig!'}
+                {generationStep === 'error' && '❌ Fejl under generering'}
+              </div>
+            )}
+
             <div className="flex gap-2 mt-4">
               <Button 
                 onClick={onCancel}
                 variant="outline"
                 className="flex-1"
+                disabled={isGenerating}
               >
                 Annuller
               </Button>
               <Button 
                 onClick={handleCreateQuote}
-                disabled={loading || materials.length === 0}
+                disabled={isGenerating}
                 className="flex-1 vvs-button-primary"
               >
                 <CheckCircle className="h-4 w-4 mr-2" />

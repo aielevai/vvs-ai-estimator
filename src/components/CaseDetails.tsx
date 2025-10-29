@@ -29,7 +29,7 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
   const handleAnalyze = async () => {
     setAnalyzing(true);
     try {
-      // Step 1: Run AI analysis
+      // 1) Kald analyze-email
       const analyzeResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/analyze-email', {
         method: 'POST',
         headers: {
@@ -37,18 +37,19 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
           'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1qcnJjZGZ2cmhmemtubGt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4MDMwMzgsImV4cCI6MjA3MzM3OTAzOH0.T3HjMBptCVyHB-lDc8Lnr3xLndurh3f6c38JLJ50fL0`
         },
         body: JSON.stringify({
-          emailContent: caseData.description,
-          subject: caseData.subject
+          emailContent: caseData.description || caseData.email_content,
+          subject: caseData.subject,
+          caseId: caseData.id
         })
       });
 
       if (!analyzeResponse.ok) {
-        throw new Error('AI analysis failed');
+        throw new Error('Analyse fejlede');
       }
 
       const analysisResult = await analyzeResponse.json();
 
-      // Update case with analysis
+      // 2) Gem extracted_data på casen
       await db.updateCase(caseData.id, {
         extracted_data: analysisResult,
         status: 'analyzed'
@@ -56,10 +57,10 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
 
       toast({
         title: "✅ AI Analyse Færdig",
-        description: "Starter nu tilbudsberegning..."
+        description: "Beregner nu tilbud..."
       });
 
-      // Step 2: Automatically generate quote using calculate-quote edge function
+      // 3) Kald automatisk calculate-quote
       const quoteResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/calculate-quote', {
         method: 'POST',
         headers: {
@@ -72,22 +73,23 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
       });
 
       if (!quoteResponse.ok) {
-        throw new Error('Quote calculation failed');
+        throw new Error('Tilbudsberegning fejlede');
       }
 
       const quoteResult = await quoteResponse.json();
 
       toast({
-        title: "✅ Tilbud Genereret",
-        description: `Tilbud oprettet med ${quoteResult.lines?.length || 0} linjer`
+        title: "✅ Analyse + Tilbud Klar",
+        description: `Oprettet tilbud med ${quoteResult.quote_lines?.length || 0} linjer (${quoteResult.quote.total_amount?.toLocaleString('da-DK')} kr)`
       });
 
+      // 4) Hent opdateret case-data og vis tilbud
       onUpdate();
-    } catch (error) {
-      console.error('Analysis/Quote generation failed:', error);
+    } catch (error: any) {
+      console.error('Analysis/Quote error:', error);
       toast({
         title: "Fejl",
-        description: error instanceof Error ? error.message : "Kunne ikke generere tilbud",
+        description: error.message || "Kunne ikke analysere sagen",
         variant: "destructive"
       });
     } finally {
