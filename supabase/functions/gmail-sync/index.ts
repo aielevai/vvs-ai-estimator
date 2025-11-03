@@ -1,6 +1,6 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { supabaseAdmin } from '../_shared/supabase.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -9,7 +9,7 @@ const corsHeaders = {
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = supabaseAdmin;
 
 serve(async (req) => {
   // Handle CORS preflight requests
@@ -195,26 +195,67 @@ serve(async (req) => {
 
             console.log(`Analysis completed for case ${newCase.id}`);
 
-            // Automatically trigger quote calculation
-            try {
-              const quoteResponse = await fetch(`${supabaseUrl}/functions/v1/calculate-quote`, {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${supabaseKey}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  caseId: newCase.id
-                }),
-              });
+            // Tjek om case allerede har et aktivt quote (idempotens)
+            const { count: existingQuoteCount } = await supabase
+              .from('quotes')
+              .select('id', { count: 'exact', head: true })
+              .eq('case_id', newCase.id);
 
-              if (quoteResponse.ok) {
-                console.log(`Quote generated for case ${newCase.id}`);
-              } else {
-                console.error(`Failed to generate quote for case ${newCase.id}:`, await quoteResponse.text());
+            if ((existingQuoteCount ?? 0) === 0) {
+              // Automatically trigger quote calculation
+              try {
+                const quoteResponse = await fetch(`${supabaseUrl}/functions/v1/calculate-quote`, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${supabaseKey}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    caseId: newCase.id
+                  }),
+                });
+
+                if (quoteResponse.ok) {
+                  const quoteResult = await quoteResponse.json();
+                  const quoteData = quoteResult.data || quoteResult;
+                  
+                  console.log(`✅ Quote generated for case ${newCase.id}:`, {
+                    quote_number: quoteData.quote?.quote_number,
+                    total: quoteData.total,
+                    labor_hours: quoteData.laborHours,
+                    lines_count: quoteData.lines?.length,
+                    material_lines: quoteData.lines?.filter((l: any) => l.line_type === 'material').length,
+                    valentin_materials: quoteData.lines?.filter((l: any) => l.line_type === 'material' && !l.customer_supplied).length,
+                    customer_supplied: quoteData.lines?.filter((l: any) => l.line_type === 'material' && l.customer_supplied).length
+                  });
+                  
+                  // Sikkerhedsgate: kun opdater til 'quoted' hvis komplet tilbud
+                  const hasMaterials = (quoteData.lines || []).some((l: any) => l.line_type === 'material');
+                  const isServiceCall = quoteData.metadata?.project_type === 'service_call';
+                  const hasValidTotal = quoteData.total > 0;
+                  
+                  if (hasValidTotal && (hasMaterials || isServiceCall)) {
+                    await supabase
+                      .from('cases')
+                      .update({ status: 'quoted' })
+                      .eq('id', newCase.id);
+                    console.log(`✅ Case ${newCase.id} status updated to 'quoted'`);
+                  } else {
+                    console.warn(`⚠️  Quote incomplete (materials=${hasMaterials}, total=${quoteData.total}); keeping status='analyzed'`);
+                  }
+                  
+                } else {
+                  const errorText = await quoteResponse.text();
+                  console.error(`❌ Failed to generate quote for case ${newCase.id}:`, {
+                    status: quoteResponse.status,
+                    error: errorText
+                  });
+                }
+              } catch (quoteError) {
+                console.error(`❌ Error generating quote for case ${newCase.id}:`, quoteError);
               }
-            } catch (quoteError) {
-              console.error(`Error generating quote for case ${newCase.id}:`, quoteError);
+            } else {
+              console.log(`⚠️  Case ${newCase.id} already has a quote, skipping quote generation`);
             }
           } else {
             console.error(`Failed to analyze case ${newCase.id}:`, await analysisResponse.text());

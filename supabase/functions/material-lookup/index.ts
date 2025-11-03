@@ -1,19 +1,19 @@
 // ROBUST MATERIAL LOOKUP - BOM-First with Component Catalog
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { generateProjectBOM, BomLine } from '../shared/bom-generator.ts';
 import { ok, err, handleOptions, normalizeCustomerSupplied } from "../_shared/http.ts";
+import { supabaseAdmin } from '../_shared/supabase.ts';
 
-// Map BOM til komponenter (NET priser fra DB eller fallback)
-async function mapBOMToProductsNet(supabase: any, bom: BomLine[]): Promise<any[]> {
+// Map BOM til komponenter (NET priser fra DB)
+async function mapBOMToProductsNet(bom: BomLine[]): Promise<any[]> {
   const out: any[] = [];
   
   for (const comp of bom) {
-    // Hent komponent fra catalog
-    const { data: component } = await supabase
+    // Hent komponent fra catalog (brug 'key' som match-felt)
+    const { data: component } = await supabaseAdmin
       .from('components')
-      .select('*')
+      .select('key, supplier_sku, notes, net_price, unit')
       .eq('key', comp.componentKey)
       .maybeSingle();
     
@@ -24,10 +24,11 @@ async function mapBOMToProductsNet(supabase: any, bom: BomLine[]): Promise<any[]
       product_code: component?.supplier_sku || comp.componentKey,
       description: component?.notes || comp.componentKey,
       quantity: comp.qty,
-      unit: comp.unit,
+      unit: component?.unit || comp.unit || 'stk',
       net_unit_price: netPrice,
       net_total_price: netPrice * comp.qty,
-      customer_supplied: !!comp.customerSupplied
+      customer_supplied: !!comp.customerSupplied,
+      source: 'bom'
     });
   }
   
@@ -48,16 +49,12 @@ serve(async (req) => {
     
     console.log(`🔧 Material lookup: ${projectType}, size=${estimatedSize}`);
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
-
     // Generér BOM med normaliserede signals
     const bom = generateProjectBOM(projectType, estimatedSize, complexity || 'medium', normalizedSignals);
     console.log(`Generated BOM with ${bom.length} components`);
 
-    // Map til produkter
-    const materialsNet = await mapBOMToProductsNet(supabase, bom);
+    // Map til produkter med NET-priser fra components-tabellen
+    const materialsNet = await mapBOMToProductsNet(bom);
     const netTotal = materialsNet.reduce((s, m) => s + m.net_total_price, 0);
     
     console.log(`✅ Materials NET total: ${netTotal.toFixed(2)} kr`);

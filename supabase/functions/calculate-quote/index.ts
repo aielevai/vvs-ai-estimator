@@ -1,8 +1,8 @@
 // ROBUST GENERIC QUOTE CALCULATOR - Multi-Type Support
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { ok, err, handleOptions } from "../_shared/http.ts";
+import { supabaseAdmin } from '../_shared/supabase.ts';
 
 function complexityToNumeric(level: string): number {
   const map: Record<string, number> = { simple: 0.8, medium: 1.0, complex: 1.3, emergency: 1.5 };
@@ -85,9 +85,7 @@ serve(async (req) => {
 
     console.log('📊 Calculating quote for case:', caseId);
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = supabaseAdmin;
 
     // Prøv inline analysis først, ellers fallback til DB
     let analysis = null;
@@ -200,24 +198,64 @@ serve(async (req) => {
 
     console.log('💰 Labor:', { hours, laborRate, laborCost, vehicleRate, vehicleCost });
 
-    // 3) Materialer via material-lookup (returnerer NET priser)
-    let materialResp: any = null;
-    try {
-      materialResp = await supabase.functions.invoke('material-lookup', {
-        body: {
-          projectType: analysis.project_type,
-          estimatedSize: size,
-          signals: analysis.signals ?? {},
-          materialeAnalyse: analysis.materiale_analyse,
-          complexity: analysis.signals.complexity
+    // 3) Materialer - autokald material-lookup hvis ikke i body
+    let materials_net: any[] | null = body.materials_net ?? body.materials ?? null;
+
+    if (!materials_net) {
+      console.log('🔧 No materials provided, calling material-lookup...');
+      
+      let materialResp: any = null;
+      try {
+        materialResp = await supabase.functions.invoke('material-lookup', {
+          body: {
+            projectType: analysis.project_type,
+            estimatedSize: size,
+            signals: analysis.signals ?? {},
+            complexity: analysis.signals?.complexity ?? 'medium'
+          }
+        });
+        
+        if (materialResp.error) {
+          console.error('❌ Material lookup failed:', materialResp.error);
+          return err('Material lookup failed - cannot generate quote', 502, { 
+            details: materialResp.error 
+          });
         }
-      });
-    } catch (e) {
-      console.error('❌ Material lookup failed:', e);
+        
+      } catch (e) {
+        console.error('❌ Material lookup exception:', e);
+        return err('Material lookup exception - cannot generate quote', 502, { 
+          details: String(e) 
+        });
+      }
+      
+      materials_net = materialResp?.data?.materials_net ?? [];
+      
+      // HÅRD FEJL hvis ingen materialer for projekter der kræver det
+      if (materials_net.length === 0 && analysis.project_type !== 'service_call') {
+        console.error('❌ No materials returned from lookup');
+        return err('Material lookup returned no materials - check components table', 500);
+      }
+      
+      console.log(`✅ Auto-fetched ${materials_net.length} materials`);
+    } else {
+      console.log(`📦 Using provided materials: ${materials_net.length} items`);
     }
 
-    const materials_net = materialResp?.data?.materials_net ?? [];
-    console.log(`🔧 Materials (NET): ${materials_net.length} items`);
+    // Failsafe defaults for materials_net fields
+    materials_net = (materials_net ?? []).map((m: any) => ({
+      description: m.description ?? m.name ?? 'Materiale',
+      quantity: Number(m.quantity ?? 1),
+      unit: m.unit ?? 'stk',
+      net_unit_price: Number(m.net_unit_price ?? 0),
+      net_total_price: Number(m.net_total_price ?? (Number(m.net_unit_price ?? 0) * Number(m.quantity ?? 1))),
+      customer_supplied: !!m.customer_supplied,
+      product_code: m.product_code ?? m.supplier_sku ?? null,
+      component_key: m.component_key ?? null,
+      source: m.source ?? 'bom'
+    }));
+
+    const round2 = (n: number) => Math.round(n * 100) / 100;
 
     // Hent materialegulv
     const { data: floor } = await supabase
@@ -226,14 +264,14 @@ serve(async (req) => {
       .eq('project_type', analysis.project_type)
       .maybeSingle();
     
-    const matFloorSale = (Number(floor?.base_floor ?? 0) + Number(floor?.per_unit_floor ?? 0) * size);
+    const matFloorSale = Number(floor?.base_floor ?? 0) + Number(floor?.per_unit_floor ?? 0) * size;
     console.log(`📏 Material floor (SALE): ${matFloorSale} (base=${floor?.base_floor}, per_unit=${floor?.per_unit_floor})`);
 
     // Byg salgslinjer med markup (40%) - KUN på NET, ikke på kundeleveret
     const materials_lines = materials_net.map((m: any) => {
       const isCustomerSupplied = !!m.customer_supplied;
-      const sale_unit = m.net_unit_price * (isCustomerSupplied ? 0 : (1 + MARKUP));
-      const sale_total = sale_unit * m.quantity;
+      const sale_unit = round2(m.net_unit_price * (isCustomerSupplied ? 0 : (1 + MARKUP)));
+      const sale_total = round2(sale_unit * m.quantity);
       return {
         line_type: 'material',
         description: m.description,
@@ -248,22 +286,27 @@ serve(async (req) => {
       };
     });
     
-    let materialsTotal = materials_lines.reduce((s: number, x: any) => s + x.total_price, 0);
+    // Beregn salg KUN på Valentin-leveret (ekskluder kundeleveret)
+    const valentinLines = materials_lines.filter((l: any) => !l.customer_supplied);
+    let valentinTotal = valentinLines.reduce((s: number, x: any) => s + x.total_price, 0);
     
-    // Håndhæv materialegulv (salg) - løft kritiske komponenter proportionelt
-    if (materialsTotal < matFloorSale && materialsTotal > 0) {
-      console.log(`⬆️  Applying material floor: ${materialsTotal} -> ${matFloorSale}`);
-      const factor = matFloorSale / materialsTotal;
+    // Håndhæv floor KUN på Valentin-leveret
+    if (valentinTotal < matFloorSale && valentinTotal > 0) {
+      console.log(`⬆️  Applying material floor: ${valentinTotal.toFixed(2)} -> ${matFloorSale}`);
+      const factor = matFloorSale / valentinTotal;
+      
       materials_lines.forEach((l: any) => { 
         if (!l.customer_supplied) { 
-          l.unit_price *= factor; 
-          l.total_price *= factor; 
+          l.unit_price = round2(l.unit_price * factor); 
+          l.total_price = round2(l.total_price * factor); 
         } 
       });
-      materialsTotal = materials_lines.reduce((s: number, x: any) => s + x.total_price, 0);
+      
+      valentinTotal = matFloorSale;
     }
 
-    console.log(`💎 Materials (SALE): ${materialsTotal.toFixed(2)}`);
+    const materialsTotal = round2(materials_lines.reduce((s: number, x: any) => s + x.total_price, 0));
+    console.log(`💎 Materials (SALE): ${materialsTotal.toFixed(2)} (Valentin: ${valentinTotal.toFixed(2)}, Customer: ${(materialsTotal - valentinTotal).toFixed(2)})`);
 
     // 4) Prisbog - deterministiske tillæg
     const surcharges = evaluatePricingRules(
@@ -347,10 +390,10 @@ serve(async (req) => {
       });
     }
 
-    // 7) Totaler FRA linjer
-    const subtotal = lines.reduce((a, x) => a + Number(x.total_price), 0);
-    const vat = subtotal * VAT;
-    const total = subtotal + vat;
+    // 7) Totaler FRA linjer med korrekt afrunding
+    const subtotal = round2(lines.reduce((a, x) => a + Number(x.total_price), 0));
+    const vat = round2(subtotal * VAT);
+    const total = round2(subtotal + vat);
 
     console.log(`💵 Totals: subtotal=${subtotal.toFixed(2)}, vat=${vat.toFixed(2)}, total=${total.toFixed(2)}`);
 
@@ -431,13 +474,20 @@ serve(async (req) => {
 
     console.log(`✅ Saved ${linesWithQuoteId.length} quote lines`);
 
-    // 12) Returnér standardiseret struktur
+    // 12) Returnér standardiseret struktur (inkl. convenience-felter)
     return ok({
       quote,
       lines: linesWithQuoteId,
-      total,
       laborHours: hours,
-      calculation_explanation: pricing_trace
+      subtotal,
+      vat,
+      total,
+      calculation_explanation: pricing_trace,
+      metadata: {
+        project_type: analysis.project_type,
+        estimated_size: size,
+        complexity: analysis.signals?.complexity
+      }
     });
     
   } catch (error) {
