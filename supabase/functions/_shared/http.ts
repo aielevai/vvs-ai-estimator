@@ -11,9 +11,9 @@ export function ok<T>(data: T, status = 200) {
   });
 }
 
-export function err(e: unknown, status = 500) {
+export function err(e: unknown, status = 500, extra?: any) {
   const msg = e instanceof Error ? e.message : String(e);
-  const details = e instanceof Error ? { name: e.name, stack: e.stack } : undefined;
+  const details = extra?.details ?? (e instanceof Error ? { name: e.name, stack: e.stack } : undefined);
   return new Response(JSON.stringify({ ok: false, error: msg, details }), {
     status,
     headers: { "Content-Type": "application/json", ...corsHeaders },
