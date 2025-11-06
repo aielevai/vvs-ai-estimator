@@ -204,7 +204,7 @@ serve(async (req) => {
     const { error: updateError } = await supabase
       .from('cases')
       .update({ extracted_data: enhanced })
-      .eq('id', body.caseId);
+      .eq('id', caseId);
 
     if (updateError) {
       console.warn('⚠️ Failed to save analysis to case:', updateError);
