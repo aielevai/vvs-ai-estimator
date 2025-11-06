@@ -229,12 +229,18 @@ serve(async (req) => {
         });
       }
       
-      materials_net = materialResp?.data?.materials_net ?? [];
+      // FIX: Double-wrap svar fra edge invoke
+      const responseData = materialResp?.data;
+      if (responseData?.ok === false) {
+        console.error('❌ Material lookup error:', responseData?.error);
+        return err('Material lookup failed - ' + (responseData?.error || 'unknown'), 502);
+      }
+      materials_net = responseData?.data?.materials_net ?? [];
       
       // HÅRD FEJL hvis ingen materialer for projekter der kræver det
       if (materials_net.length === 0 && analysis.project_type !== 'service_call') {
         console.error('❌ No materials returned from lookup');
-        return err('Material lookup returned no materials - check components table', 500);
+        return err('Material lookup returned no materials - check components/BOM coverage', 500);
       }
       
       console.log(`✅ Auto-fetched ${materials_net.length} materials`);
