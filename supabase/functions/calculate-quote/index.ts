@@ -233,7 +233,7 @@ serve(async (req) => {
       const responseData = materialResp?.data;
       if (responseData?.ok === false) {
         console.error('❌ Material lookup error:', responseData?.error);
-        return err('Material lookup failed - ' + (responseData?.error || 'unknown'), 502);
+        return err('Material lookup failed: ' + (responseData?.error || 'unknown'), 502);
       }
       materials_net = responseData?.data?.materials_net ?? [];
       
@@ -429,42 +429,94 @@ serve(async (req) => {
       minimum_applied: !!minimumLine
     };
 
-    // 10) Gem quote
+    // 10) Gem quote med upsert-logik
     const quoteNumber = `Q-${Date.now()}`;
     const validUntil = new Date();
     validUntil.setDate(validUntil.getDate() + 30);
 
-    const { data: quote, error: quoteError } = await supabase
+    // Check if quote already exists
+    const { data: existingQuote } = await supabase
       .from('quotes')
-      .insert({
-        case_id: caseId,
-        quote_number: quoteNumber,
-        subtotal,
-        vat_amount: vat,
-        total_amount: total,
-        labor_hours: hours,
-        service_vehicle_cost: vehicleCost,
-        status: 'draft',
-        valid_until: validUntil.toISOString().split('T')[0],
-        pricing_snapshot,
-        pricing_trace,
-        metadata: {
-          project_type: analysis.project_type,
-          estimated_size: size,
-          complexity: analysis.signals.complexity
-        }
-      })
-      .select()
-      .single();
+      .select('id')
+      .eq('case_id', caseId)
+      .maybeSingle();
 
-    if (quoteError) {
-      console.error('❌ Failed to create quote:', quoteError);
-      return err(`Failed to create quote: ${quoteError.message}`, 500);
+    let quote;
+    let quoteError;
+
+    if (existingQuote) {
+      // UPDATE existing quote
+      console.log(`♻️  Updating existing quote for case ${caseId}`);
+      const { data, error } = await supabase
+        .from('quotes')
+        .update({
+          quote_number: quoteNumber,
+          subtotal,
+          vat_amount: vat,
+          total_amount: total,
+          labor_hours: hours,
+          service_vehicle_cost: vehicleCost,
+          status: 'draft',
+          valid_until: validUntil.toISOString().split('T')[0],
+          pricing_snapshot,
+          pricing_trace,
+          metadata: {
+            project_type: analysis.project_type,
+            estimated_size: size,
+            complexity: analysis.signals.complexity
+          }
+        })
+        .eq('id', existingQuote.id)
+        .select()
+        .single();
+      
+      quote = data;
+      quoteError = error;
+    } else {
+      // INSERT new quote
+      console.log(`✨ Creating new quote for case ${caseId}`);
+      const { data, error } = await supabase
+        .from('quotes')
+        .insert({
+          case_id: caseId,
+          quote_number: quoteNumber,
+          subtotal,
+          vat_amount: vat,
+          total_amount: total,
+          labor_hours: hours,
+          service_vehicle_cost: vehicleCost,
+          status: 'draft',
+          valid_until: validUntil.toISOString().split('T')[0],
+          pricing_snapshot,
+          pricing_trace,
+          metadata: {
+            project_type: analysis.project_type,
+            estimated_size: size,
+            complexity: analysis.signals.complexity
+          }
+        })
+        .select()
+        .single();
+      
+      quote = data;
+      quoteError = error;
     }
 
-    console.log(`✅ Quote created: ${quote.quote_number}`);
+    if (quoteError) {
+      console.error('❌ Failed to save quote:', quoteError);
+      return err(`Failed to save quote: ${quoteError.message}`, 500);
+    }
 
-    // 11) Gem linjer
+    console.log(`✅ Quote saved: ${quote.quote_number}`);
+
+    // 11) Gem linjer (slet gamle først hvis update)
+    if (existingQuote) {
+      await supabase
+        .from('quote_lines')
+        .delete()
+        .eq('quote_id', quote.id);
+    }
+
     const linesWithQuoteId = lines.map((l, idx) => ({
       ...l,
       quote_id: quote.id,

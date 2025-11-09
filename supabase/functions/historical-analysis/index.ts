@@ -44,8 +44,8 @@ serve(async (req) => {
     // 2. Get material patterns (BOM suggestions)
     const materialPatterns = await analyzeMaterialPatterns(supabase, projectType, estimatedSize);
     
-    // 3. Calculate risk factors
-    const riskAnalysis = await calculateRiskFactors(supabase, projectType, description);
+    // 3. Calculate risk factors (with fallback for missing description)
+    const riskAnalysis = await calculateRiskFactors(supabase, projectType, description || 'No description provided');
     
     // 4. Generate insights and confidence
     const insights = generateInsights(timeAnalysis, materialPatterns, riskAnalysis);
@@ -282,7 +282,7 @@ async function analyzeMaterialPatterns(supabase: any, projectType: string, estim
   };
 }
 
-async function calculateRiskFactors(supabase: any, projectType: string, description: string) {
+async function calculateRiskFactors(supabase: any, projectType: string, description: string | undefined | null) {
   console.log('Calculating risk factors...');
   
   const riskSignals = extractRiskSignals(description);
@@ -387,8 +387,8 @@ function adjustQuantityForSize(avgQuantity: number, estimatedSize: number, proje
   return avgQuantity * factor;
 }
 
-function extractRiskSignals(description: string): any {
-  const desc = description.toLowerCase();
+function extractRiskSignals(description: string | undefined | null): any {
+  const desc = (description || '').toLowerCase();
   
   return {
     emergency: desc.includes('akut') || desc.includes('læk') || desc.includes('haste'),
