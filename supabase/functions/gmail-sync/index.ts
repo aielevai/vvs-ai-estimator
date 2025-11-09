@@ -176,7 +176,8 @@ serve(async (req) => {
             },
             body: JSON.stringify({
               emailContent: body,
-              subject: subject
+              subject: subject,
+              caseId: newCase.id
             }),
           });
 
