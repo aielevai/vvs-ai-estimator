@@ -648,6 +648,7 @@ export type Database = {
       }
       quote_lines: {
         Row: {
+          component_key: string | null
           customer_supplied: boolean | null
           description: string
           id: string
@@ -657,11 +658,13 @@ export type Database = {
           quantity: number | null
           quote_id: string | null
           sort_order: number | null
+          source: string | null
           total_price: number | null
           unit: string | null
           unit_price: number | null
         }
         Insert: {
+          component_key?: string | null
           customer_supplied?: boolean | null
           description: string
           id?: string
@@ -671,11 +674,13 @@ export type Database = {
           quantity?: number | null
           quote_id?: string | null
           sort_order?: number | null
+          source?: string | null
           total_price?: number | null
           unit?: string | null
           unit_price?: number | null
         }
         Update: {
+          component_key?: string | null
           customer_supplied?: boolean | null
           description?: string
           id?: string
@@ -685,6 +690,7 @@ export type Database = {
           quantity?: number | null
           quote_id?: string | null
           sort_order?: number | null
+          source?: string | null
           total_price?: number | null
           unit?: string | null
           unit_price?: number | null
