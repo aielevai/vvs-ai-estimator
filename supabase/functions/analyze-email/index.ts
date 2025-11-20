@@ -100,7 +100,7 @@ serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-5-2025-08-07',
+        model: 'gpt-5.1',
         max_completion_tokens: 12000,
         messages: [
           { role: 'system', content: VALENTIN_AI_PROMPT },
