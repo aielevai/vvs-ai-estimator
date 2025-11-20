@@ -340,48 +340,72 @@ export default function UnifiedDashboard() {
               </div>
             ) : (
               <div className="space-y-4">
-                {cases.map((caseItem) => (
-                  <div
-                    key={caseItem.id}
-                    className="border border-border rounded-lg p-4 hover:bg-muted/50 transition-colors cursor-pointer"
-                    onClick={() => handleCaseClick(caseItem.id)}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <h3 className="font-semibold text-lg">{caseItem.subject || 'Ingen emne'}</h3>
-                          <Badge className={`vvs-status-${caseItem.status}`}>
-                            {caseItem.status}
-                          </Badge>
-                          {caseItem.urgency !== 'normal' && (
-                            <Badge className={`vvs-urgency-${caseItem.urgency}`}>
-                              {caseItem.urgency}
+                {cases.map((caseItem) => {
+                  const processingStatus = (caseItem as any).processing_status;
+                  const isProcessing = processingStatus && processingStatus.step !== 'complete' && processingStatus.step !== 'pending';
+                  
+                  return (
+                    <div
+                      key={caseItem.id}
+                      className="border border-border rounded-lg p-4 hover:bg-muted/50 transition-colors cursor-pointer"
+                      onClick={() => handleCaseClick(caseItem.id)}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <h3 className="font-semibold text-lg">{caseItem.subject || 'Ingen emne'}</h3>
+                            <Badge className={`vvs-status-${caseItem.status}`}>
+                              {caseItem.status}
                             </Badge>
+                            {caseItem.urgency !== 'normal' && (
+                              <Badge className={`vvs-urgency-${caseItem.urgency}`}>
+                                {caseItem.urgency}
+                              </Badge>
+                            )}
+                          </div>
+
+                          {/* FASE 6: Processing status indicator */}
+                          {isProcessing && (
+                            <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-md border border-blue-200 dark:border-blue-900">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Clock className="h-4 w-4 animate-spin text-blue-600" />
+                                <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                                  {processingStatus.message}
+                                </span>
+                              </div>
+                              <div className="w-full bg-blue-100 dark:bg-blue-900/30 rounded-full h-2">
+                                <div 
+                                  className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                                  style={{ width: `${processingStatus.progress || 0}%` }}
+                                />
+                              </div>
+                            </div>
                           )}
+
+                          <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
+                            {caseItem.description}
+                          </p>
+                          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                            <span>{formatDate(caseItem.created_at)}</span>
+                            {caseItem.address && <span>📍 {caseItem.address}</span>}
+                          </div>
                         </div>
-                        <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
-                          {caseItem.description}
-                        </p>
-                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                          <span>{formatDate(caseItem.created_at)}</span>
-                          {caseItem.address && <span>📍 {caseItem.address}</span>}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2 ml-4">
-                        <div className="flex items-center gap-2">
-                          {caseItem.status === 'new' && (
-                            <Button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleAnalyzeCase(caseItem);
-                              }}
-                              size="sm"
-                              className="vvs-button-primary"
-                            >
-                              <Brain className="h-4 w-4 mr-2" />
-                              Start AI Analyse
-                            </Button>
-                          )}
+                        <div className="flex flex-col items-end gap-2 ml-4">
+                          <div className="flex items-center gap-2">
+                            {caseItem.status === 'new' && !isProcessing && (
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAnalyzeCase(caseItem);
+                                }}
+                                size="sm"
+                                className="vvs-button-primary"
+                              >
+                                <Brain className="h-4 w-4 mr-2" />
+                                Start AI Analyse
+                              </Button>
+                            )}
+                          </div>
                           <Button
                             onClick={(e) => handleDeleteCase(caseItem.id, e)}
                             size="sm"
@@ -390,17 +414,17 @@ export default function UnifiedDashboard() {
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
+                          {caseItem.quotes && caseItem.quotes.length > 0 && (
+                            <div className="flex items-center gap-2 text-green-600 text-sm">
+                              <CheckCircle className="h-4 w-4" />
+                              <span>Tilbud {caseItem.quotes[0].status === 'draft' ? 'draft' : 'genereret'}</span>
+                            </div>
+                          )}
                         </div>
-                        {caseItem.quotes && caseItem.quotes.length > 0 && (
-                          <div className="flex items-center gap-2 text-green-600 text-sm">
-                            <CheckCircle className="h-4 w-4" />
-                            <span>Tilbud {caseItem.quotes[0].status === 'draft' ? 'draft' : 'genereret'}</span>
-                          </div>
-                        )}
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
