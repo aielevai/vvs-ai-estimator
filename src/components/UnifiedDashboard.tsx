@@ -44,6 +44,37 @@ export default function UnifiedDashboard() {
 
   useEffect(() => {
     loadCases();
+
+    // FASE 6: Real-time subscription for case updates
+    const channel = supabase
+      .channel('cases-realtime')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'cases'
+      }, (payload) => {
+        console.log('📊 Case updated:', payload);
+        loadCases(); // Reload cases on any change
+
+        // Auto-open case when quote is ready
+        if ((payload.new as any)?.processing_status?.step === 'complete') {
+          toast({
+            title: "✅ Tilbud Klar!",
+            description: `Sag: ${(payload.new as any).subject || 'Ny sag'}`,
+            action: (
+              <Button onClick={() => handleCaseClick((payload.new as any).id)}>
+                Åbn Tilbud
+              </Button>
+            ),
+            duration: 10000,
+          });
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleCaseClick = async (caseId: string) => {

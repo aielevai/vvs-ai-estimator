@@ -166,6 +166,15 @@ serve(async (req) => {
 
         console.log(`Created case ${newCase.id} for email ${message.id}`);
 
+        // Update processing status: analyzing
+        await supabase.from('cases').update({
+          processing_status: {
+            step: 'analyzing',
+            progress: 25,
+            message: 'AI analyserer email...'
+          }
+        }).eq('id', newCase.id);
+
         // Automatically trigger AI analysis
         try {
           const analysisResponse = await fetch(`${supabaseUrl}/functions/v1/analyze-email`, {
@@ -184,12 +193,17 @@ serve(async (req) => {
           if (analysisResponse.ok) {
             const analysisResult = await analysisResponse.json();
             
-            // Update case with analysis
+            // Update case with analysis + processing status
             await supabase
               .from('cases')
               .update({
                 extracted_data: analysisResult,
                 status: 'analyzed',
+                processing_status: {
+                  step: 'materials',
+                  progress: 50,
+                  message: 'Finder materialer...'
+                },
                 updated_at: new Date().toISOString()
               })
               .eq('id', newCase.id);
@@ -238,7 +252,14 @@ serve(async (req) => {
                   if (hasValidTotal && (hasMaterials || isServiceCall)) {
                     await supabase
                       .from('cases')
-                      .update({ status: 'quoted' })
+                      .update({ 
+                        status: 'quoted',
+                        processing_status: {
+                          step: 'complete',
+                          progress: 100,
+                          message: 'Tilbud klar!'
+                        }
+                      })
                       .eq('id', newCase.id);
                     console.log(`✅ Case ${newCase.id} status updated to 'quoted'`);
                   } else {

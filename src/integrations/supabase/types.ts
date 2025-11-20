@@ -70,6 +70,7 @@ export type Database = {
           extracted_data: Json | null
           id: string
           postal_code: string | null
+          processing_status: Json | null
           status: string | null
           subject: string | null
           task_type: string | null
@@ -87,6 +88,7 @@ export type Database = {
           extracted_data?: Json | null
           id?: string
           postal_code?: string | null
+          processing_status?: Json | null
           status?: string | null
           subject?: string | null
           task_type?: string | null
@@ -104,6 +106,7 @@ export type Database = {
           extracted_data?: Json | null
           id?: string
           postal_code?: string | null
+          processing_status?: Json | null
           status?: string | null
           subject?: string | null
           task_type?: string | null
@@ -192,6 +195,39 @@ export type Database = {
           phone?: string | null
           postal_code?: string | null
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      discount_codes: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          discount_group: string
+          discount_percentage: number
+          id: string
+          product_code_prefix: string | null
+          valid_from: string | null
+          valid_to: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          discount_group: string
+          discount_percentage: number
+          id?: string
+          product_code_prefix?: string | null
+          valid_from?: string | null
+          valid_to?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          discount_group?: string
+          discount_percentage?: number
+          id?: string
+          product_code_prefix?: string | null
+          valid_from?: string | null
+          valid_to?: string | null
         }
         Relationships: []
       }
@@ -389,6 +425,39 @@ export type Database = {
           per_unit_floor?: number
           project_type?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      material_matches: {
+        Row: {
+          component_key: string
+          confidence: number | null
+          created_at: string | null
+          id: string
+          matched_product_code: string | null
+          matched_vvs_number: string | null
+          project_type: string | null
+          search_query: string | null
+        }
+        Insert: {
+          component_key: string
+          confidence?: number | null
+          created_at?: string | null
+          id?: string
+          matched_product_code?: string | null
+          matched_vvs_number?: string | null
+          project_type?: string | null
+          search_query?: string | null
+        }
+        Update: {
+          component_key?: string
+          confidence?: number | null
+          created_at?: string | null
+          id?: string
+          matched_product_code?: string | null
+          matched_vvs_number?: string | null
+          project_type?: string | null
+          search_query?: string | null
         }
         Relationships: []
       }
