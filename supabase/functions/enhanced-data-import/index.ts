@@ -39,21 +39,65 @@ serve(async (req) => {
   }
 
   try {
-    const { dataType, csvData } = await req.json();
-    
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log(`Starting import for dataType: ${dataType}`);
+    console.log('Starting full data import from Storage and public files...');
 
-    if (dataType === 'enhanced_products') {
-      return await importEnhancedProducts(supabase, csvData);
-    } else if (dataType === 'historical_data') {
-      return await importHistoricalData(supabase, csvData);
-    } else {
-      throw new Error(`Unknown dataType: ${dataType}`);
+    // 1. Read CSV from Supabase Storage (product-data bucket)
+    const { data: csvFile, error: csvError } = await supabase.storage
+      .from('product-data')
+      .download('ahlsell-latest.csv');
+    
+    if (csvError) {
+      throw new Error(`Failed to download CSV from Storage: ${csvError.message}`);
     }
+    
+    const csvData = await csvFile.text();
+    console.log('CSV file downloaded from Storage');
+
+    // 2. Read discount codes from /public/data/discount.txt
+    const discountResponse = await fetch(`${supabaseUrl.replace('https://', 'https://xrvmjrrcdfvrhfzknlku.')}/storage/v1/object/public/data/discount.txt`);
+    let discountData = '';
+    
+    if (!discountResponse.ok) {
+      // Try alternative public URL
+      const altResponse = await fetch('https://xrvmjrrcdfvrhfzknlku.supabase.co/functions/v1/enhanced-data-import/../../../public/data/discount.txt');
+      if (altResponse.ok) {
+        discountData = await altResponse.text();
+      } else {
+        console.warn('Could not load discount.txt, skipping discount import');
+      }
+    } else {
+      discountData = await discountResponse.text();
+    }
+
+    // 3. Clear old data
+    console.log('Deleting old data...');
+    await supabase.from('enhanced_supplier_prices').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('discount_codes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    console.log('Old data cleared');
+
+    // 4. Import new data
+    const productsResult = await importEnhancedProducts(supabase, csvData);
+    
+    let discountResult = { processed: 0, errors: 0 };
+    if (discountData) {
+      discountResult = await importDiscountCodes(supabase, discountData);
+    }
+
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        products: productsResult,
+        discounts: discountResult
+      }), 
+      { 
+        status: 200, 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      }
+    );
 
   } catch (error) {
     console.error('Error in enhanced-data-import:', error);
@@ -67,6 +111,60 @@ serve(async (req) => {
     );
   }
 });
+
+async function importDiscountCodes(supabase: any, discountData: string) {
+  console.log('Processing discount codes...');
+  
+  const lines = discountData.trim().split('\n').filter(l => l.trim());
+  let processed = 0;
+  let errors = 0;
+  const batchSize = 500;
+
+  for (let i = 0; i < lines.length; i += batchSize) {
+    const batch = [];
+    
+    for (let j = i; j < Math.min(i + batchSize, lines.length); j++) {
+      const line = lines[j].trim();
+      if (!line) continue;
+      
+      try {
+        const parts = line.split(';');
+        if (parts.length >= 3) {
+          const productCodePrefix = parts[0].trim();
+          const discountPercentage = parseFloat(parts[1].replace(',', '.'));
+          const description = parts[2].trim();
+          
+          batch.push({
+            product_code_prefix: productCodePrefix,
+            discount_percentage: discountPercentage,
+            discount_group: description,
+            description: description
+          });
+        }
+      } catch (err) {
+        console.error(`Error parsing discount line ${j}:`, err);
+        errors++;
+      }
+    }
+
+    if (batch.length > 0) {
+      const { error } = await supabase
+        .from('discount_codes')
+        .insert(batch);
+      
+      if (error) {
+        console.error('Batch insert error:', error);
+        errors += batch.length;
+      } else {
+        processed += batch.length;
+        console.log(`Imported ${batch.length} discount codes (total: ${processed})`);
+      }
+    }
+  }
+
+  console.log(`Discount import complete: ${processed} processed, ${errors} errors`);
+  return { processed, errors };
+}
 
 async function importEnhancedProducts(supabase: any, csvData: string) {
   console.log('Processing enhanced products CSV data...');
