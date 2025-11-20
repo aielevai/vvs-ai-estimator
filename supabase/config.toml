@@ -1,0 +1,32 @@
+project_id = "xrvmjrrcdfvrhfzknlku"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[functions.gmail-sync]
+verify_jwt = false
+
+[functions.analyze-email]
+verify_jwt = false
+
+[functions.calculate-quote]
+verify_jwt = false
+
+[functions.material-lookup]
+verify_jwt = false
+
+[functions.import-csv-data]
+verify_jwt = false
+
+[functions.enhanced-data-import]
+verify_jwt = false
+
+[functions.hybrid-search]
+verify_jwt = false
+
+[functions.historical-analysis]
+verify_jwt = false

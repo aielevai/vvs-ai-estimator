@@ -1,0 +1,178 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Valentin VVS Design System - Professional VVS/Plumbing theme */
+
+@layer base {
+  :root {
+    /* Apple-Inspired Modern Design System */
+    --background: 0 0% 96%;  /* #f5f5f5 */
+    --foreground: 210 30% 25%;
+    
+    --card: 0 0% 100%;
+    --card-foreground: 210 30% 25%;
+    
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 30% 25%;
+    
+    --primary: 210 42% 31%;  /* #374c63 - Dark blue */
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 210 42% 26%;
+    
+    --secondary: 25 85% 60%;  /* #ee913f - Orange */
+    --secondary-foreground: 0 0% 100%;
+    
+    --muted: 210 15% 95%;
+    --muted-foreground: 210 20% 45%;
+    
+    --accent: 25 85% 60%;  /* #ee913f */
+    --accent-foreground: 0 0% 100%;
+    
+    --success: 145 70% 40%;
+    --success-foreground: 0 0% 98%;
+    
+    --warning: 35 85% 55%;
+    --warning-foreground: 0 0% 98%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 210 15% 88%;
+    --input: 210 15% 88%;
+    --ring: 210 42% 31%;
+
+    /* Apple-style design tokens */
+    --radius: 0.75rem;
+    --radius-lg: 1rem;
+    --radius-xl: 1.5rem;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+    --shadow-elegant: 0 8px 30px -8px rgb(55 76 99 / 0.15);
+
+    /* Transitions */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-fast: all 0.15s ease-out;
+  }
+
+  .dark {
+    --background: 210 30% 8%;
+    --foreground: 210 15% 90%;
+    
+    --card: 210 25% 12%;
+    --card-foreground: 210 15% 90%;
+    
+    --popover: 210 25% 12%;
+    --popover-foreground: 210 15% 90%;
+    
+    --primary: 210 42% 45%;
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 210 42% 40%;
+    
+    --secondary: 25 85% 55%;
+    --secondary-foreground: 0 0% 100%;
+    
+    --muted: 210 25% 18%;
+    --muted-foreground: 210 15% 60%;
+    
+    --accent: 25 85% 55%;
+    --accent-foreground: 0 0% 100%;
+    
+    --success: 145 70% 50%;
+    --warning: 35 85% 60%;
+    --destructive: 0 84.2% 70%;
+    
+    --border: 210 25% 20%;
+    --input: 210 25% 15%;
+    --ring: 210 42% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold text-foreground;
+    letter-spacing: -0.02em;
+  }
+
+  /* Modern Apple-style components */
+  .vvs-card {
+    @apply bg-card rounded-[var(--radius-lg)] border border-border shadow-md hover:shadow-lg transition-all duration-300;
+  }
+
+  .vvs-button-primary {
+    @apply bg-secondary text-secondary-foreground hover:opacity-90 font-medium rounded-lg px-6 py-2.5 shadow-sm hover:shadow-md;
+    transition: var(--transition-smooth);
+  }
+
+  .vvs-header {
+    @apply bg-primary text-primary-foreground;
+    box-shadow: var(--shadow-elegant);
+  }
+
+  .vvs-status-new {
+    @apply bg-blue-100 text-blue-800 border-blue-200;
+  }
+
+  .vvs-status-analyzed {
+    @apply bg-purple-100 text-purple-800 border-purple-200;
+  }
+
+  .vvs-status-quoted {
+    @apply bg-green-100 text-green-800 border-green-200;
+  }
+
+  .vvs-status-approved {
+    @apply bg-emerald-100 text-emerald-800 border-emerald-200;
+  }
+
+  .vvs-status-sent {
+    @apply bg-gray-100 text-gray-800 border-gray-200;
+  }
+
+  .vvs-urgency-normal {
+    @apply bg-slate-100 text-slate-700;
+  }
+
+  .vvs-urgency-urgent {
+    @apply bg-orange-100 text-orange-700;
+  }
+
+  .vvs-urgency-emergency {
+    @apply bg-red-100 text-red-700;
+  }
+}
+
+@layer components {
+  .vvs-container {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  .vvs-input {
+    @apply border border-input bg-background px-3 py-2 text-sm ring-offset-background rounded-md;
+    @apply placeholder:text-muted-foreground;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+    @apply disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .vvs-button {
+    @apply inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium;
+    @apply ring-offset-background transition-colors;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+    @apply disabled:pointer-events-none disabled:opacity-50;
+  }
+}
