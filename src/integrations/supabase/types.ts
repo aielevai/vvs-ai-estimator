@@ -198,6 +198,36 @@ export type Database = {
         }
         Relationships: []
       }
+      data_import_runs: {
+        Row: {
+          error_message: string | null
+          file_checksum: string
+          file_type: string
+          id: string
+          imported_at: string | null
+          rows_imported: number | null
+          status: string | null
+        }
+        Insert: {
+          error_message?: string | null
+          file_checksum: string
+          file_type: string
+          id?: string
+          imported_at?: string | null
+          rows_imported?: number | null
+          status?: string | null
+        }
+        Update: {
+          error_message?: string | null
+          file_checksum?: string
+          file_type?: string
+          id?: string
+          imported_at?: string | null
+          rows_imported?: number | null
+          status?: string | null
+        }
+        Relationships: []
+      }
       discount_codes: {
         Row: {
           created_at: string | null

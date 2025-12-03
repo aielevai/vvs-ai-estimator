@@ -3,7 +3,7 @@
 export type BomLine = {
   componentKey: string;        // matches components.key in DB
   qty: number;
-  unit: 'stk'|'m'|'sæt'|'zone'|'ltr';
+  unit: 'stk'|'m'|'sæt'|'zone'|'ltr'|'rulle';
   critical: boolean;
   customerSupplied?: boolean;
 };

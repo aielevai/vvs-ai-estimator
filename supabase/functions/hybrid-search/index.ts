@@ -69,6 +69,7 @@ async function performLexicalSearch(supabase: any, query: string, topK: number) 
   // Normalize query for Danish text search
   const normalizedQuery = normalizeQuery(query);
   
+  // Simple text search without ts_rank (PostgREST doesn't support ts_rank in select)
   const { data, error } = await supabase
     .from('enhanced_supplier_prices')
     .select(`
@@ -76,25 +77,24 @@ async function performLexicalSearch(supabase: any, query: string, topK: number) 
       short_description, long_description,
       net_price, gross_price, price_quantity, price_unit,
       ordering_unit_1, ordering_factor_1,
-      is_on_stock, leadtime,
-      ts_rank(search_vector, plainto_tsquery('danish', $1)) as rank
+      is_on_stock, leadtime
     `)
     .textSearch('search_vector', normalizedQuery, { 
       type: 'plainto', 
       config: 'danish' 
     })
-    .order('rank', { ascending: false })
-    .limit(topK * 2); // Get more for merging
+    .limit(topK * 2);
 
   if (error) {
     console.error('Lexical search error:', error);
     return [];
   }
 
-  return (data || []).map((item: any) => ({
+  // Assign decreasing scores based on result order (text search returns relevance-ordered results)
+  return (data || []).map((item: any, index: number) => ({
     ...item,
     search_type: 'lexical',
-    score: parseFloat(item.rank) || 0
+    score: 1.0 - (index * 0.02) // Decreasing score based on position
   }));
 }
 
