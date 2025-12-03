@@ -99,6 +99,14 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
       const lineCount = Array.isArray(quoteResult.lines) ? quoteResult.lines.length : 0;
       const total = quoteResult.total ?? quoteResult.quote?.total ?? 0;
 
+      // Update processing_status to complete (backup if backend didn't)
+      await supabase
+        .from('cases')
+        .update({ 
+          processing_status: { step: 'complete', progress: 100, message: 'Tilbud klar!' }
+        })
+        .eq('id', caseData.id);
+
       toast({
         title: "✅ Analyse + Tilbud Klar",
         description: `Oprettet med ${lineCount} linjer (${total.toLocaleString('da-DK')} kr)`
