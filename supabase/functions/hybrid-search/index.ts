@@ -26,9 +26,9 @@ serve(async (req) => {
     // 1. Lexical search using PostgreSQL full-text search
     const lexicalResults = await performLexicalSearch(supabase, query, topK);
     
-    let semanticResults = [];
-    if (includeSemanticSearch && openAIApiKey) {
-      // 2. Semantic search using OpenAI embeddings
+    let semanticResults: any[] = [];
+    if (includeSemanticSearch && openAIApiKey && lexicalResults.length < 5) {
+      // 2. Semantic/ILIKE search as backup when lexical returns few results
       semanticResults = await performSemanticSearch(supabase, query, topK);
     }
 
@@ -37,6 +37,8 @@ serve(async (req) => {
 
     // 4. Enhance with additional metadata
     const enhancedResults = await enhanceResults(supabase, hybridResults.slice(0, topK));
+
+    console.log(`✅ Returning ${enhancedResults.length} results`);
 
     return new Response(
       JSON.stringify({
@@ -57,7 +59,7 @@ serve(async (req) => {
     console.error('Error in hybrid-search:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
     return new Response(
-      JSON.stringify({ error: errorMessage }),
+      JSON.stringify({ error: errorMessage, results: [] }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
@@ -66,76 +68,104 @@ serve(async (req) => {
 async function performLexicalSearch(supabase: any, query: string, topK: number) {
   console.log('Performing lexical search...');
   
-  // Normalize query for Danish text search
-  const normalizedQuery = normalizeQuery(query);
-  
-  // Simple text search without ts_rank (PostgREST doesn't support ts_rank in select)
-  const { data, error } = await supabase
-    .from('enhanced_supplier_prices')
-    .select(`
-      id, vvs_number, ean_id, supplier_item_id,
-      short_description, long_description,
-      net_price, gross_price, price_quantity, price_unit,
-      ordering_unit_1, ordering_factor_1,
-      is_on_stock, leadtime
-    `)
-    .textSearch('search_vector', normalizedQuery, { 
-      type: 'plainto', 
-      config: 'danish' 
-    })
-    .limit(topK * 2);
+  // Try textSearch first with websearch type (handles multi-word better)
+  try {
+    const { data, error } = await supabase
+      .from('enhanced_supplier_prices')
+      .select(`
+        id, vvs_number, ean_id, supplier_item_id,
+        short_description, long_description,
+        net_price, gross_price, price_quantity, price_unit,
+        ordering_unit_1, ordering_factor_1,
+        is_on_stock, leadtime
+      `)
+      .textSearch('search_vector', query, { 
+        type: 'websearch', 
+        config: 'danish' 
+      })
+      .limit(topK * 2);
 
-  if (error) {
-    console.error('Lexical search error:', error);
-    return [];
+    if (!error && data && data.length > 0) {
+      console.log(`✅ textSearch found ${data.length} results`);
+      return data.map((item: any, index: number) => ({
+        ...item,
+        search_type: 'lexical',
+        score: 1.0 - (index * 0.02)
+      }));
+    }
+    
+    if (error) {
+      console.log('textSearch failed:', error.message);
+    }
+  } catch (e) {
+    console.log('textSearch exception:', e);
   }
 
-  // Assign decreasing scores based on result order (text search returns relevance-ordered results)
-  return (data || []).map((item: any, index: number) => ({
-    ...item,
-    search_type: 'lexical',
-    score: 1.0 - (index * 0.02) // Decreasing score based on position
-  }));
+  // Fallback to ILIKE search
+  console.log('Falling back to ILIKE search...');
+  return await performILikeSearch(supabase, query, topK);
 }
 
-async function performSemanticSearch(supabase: any, query: string, topK: number) {
-  if (!openAIApiKey) {
-    console.log('No OpenAI API key, skipping semantic search');
+async function performILikeSearch(supabase: any, query: string, topK: number) {
+  // Split query into words for flexible matching
+  const words = query
+    .toLowerCase()
+    .replace(/[^\wæøåÆØÅ\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+  
+  if (words.length === 0) {
+    console.log('No valid search words');
     return [];
   }
 
-  console.log('Performing semantic search...');
-  
-  try {
-    // Generate embedding for the query
-    const embeddingResponse = await fetch('https://api.openai.com/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openAIApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'text-embedding-3-small',
-        input: query,
-        encoding_format: 'float'
-      }),
-    });
+  console.log(`ILIKE search with words: ${words.join(', ')}`);
 
-    if (!embeddingResponse.ok) {
-      console.error('OpenAI embedding error:', await embeddingResponse.text());
+  // Build OR conditions for each word
+  const orConditions = words
+    .slice(0, 3) // Limit to first 3 words for performance
+    .map(w => `short_description.ilike.%${w}%,long_description.ilike.%${w}%,vvs_number.ilike.%${w}%`)
+    .join(',');
+
+  try {
+    const { data, error } = await supabase
+      .from('enhanced_supplier_prices')
+      .select(`
+        id, vvs_number, ean_id, supplier_item_id,
+        short_description, long_description,
+        net_price, gross_price, price_quantity, price_unit,
+        ordering_unit_1, ordering_factor_1,
+        is_on_stock, leadtime
+      `)
+      .or(orConditions)
+      .not('net_price', 'is', null)
+      .gt('net_price', 0)
+      .limit(topK * 2);
+
+    if (error) {
+      console.error('ILIKE search error:', error);
       return [];
     }
 
-    const embeddingData = await embeddingResponse.json();
-    const queryEmbedding = embeddingData.data[0].embedding;
+    console.log(`✅ ILIKE found ${data?.length || 0} results`);
+    return (data || []).map((item: any, index: number) => ({
+      ...item,
+      search_type: 'ilike',
+      score: 0.8 - (index * 0.02)
+    }));
+  } catch (e) {
+    console.error('ILIKE exception:', e);
+    return [];
+  }
+}
 
-    // For now, fallback to lexical search since we don't have embeddings stored
-    // In a full implementation, we would store embeddings and use vector similarity
-    console.log('Semantic search fallback to enhanced lexical search');
-    
-    // Enhanced lexical search with synonym expansion
-    const expandedQuery = expandQueryWithSynonyms(query);
-    
+async function performSemanticSearch(supabase: any, query: string, topK: number) {
+  console.log('Performing semantic/enhanced search...');
+  
+  // Enhanced ILIKE search with synonym expansion
+  const expandedQuery = expandQueryWithSynonyms(query);
+  
+  try {
     const { data, error } = await supabase
       .from('enhanced_supplier_prices')
       .select(`
@@ -146,6 +176,8 @@ async function performSemanticSearch(supabase: any, query: string, topK: number)
         is_on_stock, leadtime
       `)
       .or(expandedQuery)
+      .not('net_price', 'is', null)
+      .gt('net_price', 0)
       .limit(topK);
 
     if (error) {
@@ -156,34 +188,28 @@ async function performSemanticSearch(supabase: any, query: string, topK: number)
     return (data || []).map((item: any, index: number) => ({
       ...item,
       search_type: 'semantic',
-      score: 1.0 - (index * 0.05) // Decreasing score based on order
+      score: 0.7 - (index * 0.03)
     }));
-
-  } catch (error) {
-    console.error('Semantic search error:', error);
+  } catch (e) {
+    console.error('Semantic search error:', e);
     return [];
   }
 }
 
-function normalizeQuery(query: string): string {
-  return query
-    .toLowerCase()
-    .replace(/æ/g, 'ae')
-    .replace(/ø/g, 'oe')
-    .replace(/å/g, 'aa')
-    .replace(/[^\w\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function expandQueryWithSynonyms(query: string): string {
   const synonyms: Record<string, string[]> = {
-    'ventil': ['spærreventil', 'afspærringsventil', 'reguleringsventil'],
-    'radiator': ['varmeapparat', 'radiatorer', 'varmelegemme'],
-    'gulvvarme': ['varmeslag', 'varmekabler', 'varmerør'],
-    'rør': ['vandledning', 'varmerør', 'afløbsrør'],
+    'ventil': ['spærreventil', 'afspærringsventil', 'reguleringsventil', 'kuglehane'],
+    'radiator': ['varmeapparat', 'radiatorer', 'varmelegeme', 'panelradiator'],
+    'gulvvarme': ['varmeslag', 'varmekabler', 'varmerør', 'gulvvarmerør'],
+    'rør': ['vandledning', 'varmerør', 'afløbsrør', 'pex'],
+    'pex': ['pex-al-pex', 'alupex', 'varmerør'],
     'blandebatteri': ['hane', 'armatur', 'vandhane'],
-    'toilet': ['wc', 'vandkloset', 'toiletsæde']
+    'toilet': ['wc', 'vandkloset', 'toiletskål'],
+    'cisterne': ['duofix', 'indbygning', 'skyllesystem'],
+    'brusearmatur': ['termostat', 'bruser', 'brusebatteri'],
+    'håndvask': ['vask', 'håndvaskarmatur', 'servantarmatur'],
+    'afløb': ['kloak', 'drain', 'afløbsrør'],
+    'isolering': ['rørisolering', 'isoleringsrør']
   };
 
   const words = query.toLowerCase().split(/\s+/);
@@ -191,14 +217,17 @@ function expandQueryWithSynonyms(query: string): string {
 
   words.forEach(word => {
     expandedTerms.push(word);
-    if (synonyms[word]) {
-      expandedTerms.push(...synonyms[word]);
-    }
+    Object.entries(synonyms).forEach(([key, values]) => {
+      if (word.includes(key) || key.includes(word)) {
+        expandedTerms.push(...values);
+      }
+    });
   });
 
-  // Create OR conditions for enhanced search
-  return expandedTerms
-    .map(term => `short_description.ilike.%${term}%,long_description.ilike.%${term}%,vvs_number.ilike.%${term}%`)
+  // Deduplicate and create OR conditions
+  const uniqueTerms = [...new Set(expandedTerms)].slice(0, 5);
+  return uniqueTerms
+    .map(term => `short_description.ilike.%${term}%,long_description.ilike.%${term}%`)
     .join(',');
 }
 
@@ -206,41 +235,48 @@ function combineResults(lexicalResults: any[], semanticResults: any[], query: st
   console.log('Combining lexical and semantic results...');
   
   const combined = new Map();
-  const lambda = 0.6; // Weight for lexical vs semantic (0.6 favors lexical)
+  const lambda = 0.7; // Weight for lexical vs semantic
   
   // Add lexical results
   lexicalResults.forEach(item => {
-    const key = item.vvs_number || item.id;
+    const key = item.supplier_item_id || item.vvs_number || item.id;
     combined.set(key, {
       ...item,
       final_score: lambda * item.score,
-      search_types: ['lexical']
+      search_types: [item.search_type]
     });
   });
 
   // Add semantic results (merge if exists)
   semanticResults.forEach(item => {
-    const key = item.vvs_number || item.id;
+    const key = item.supplier_item_id || item.vvs_number || item.id;
     if (combined.has(key)) {
       const existing = combined.get(key);
       existing.final_score += (1 - lambda) * item.score;
-      existing.search_types.push('semantic');
+      existing.search_types.push(item.search_type);
     } else {
       combined.set(key, {
         ...item,
         final_score: (1 - lambda) * item.score,
-        search_types: ['semantic']
+        search_types: [item.search_type]
       });
     }
   });
 
   // Apply boosting rules
+  const queryLower = query.toLowerCase();
   const results = Array.from(combined.values()).map(item => {
     let boostedScore = item.final_score;
     
     // Boost exact VVS number matches
-    if (item.vvs_number && query.toLowerCase().includes(item.vvs_number.toLowerCase())) {
+    if (item.vvs_number && queryLower.includes(item.vvs_number.toLowerCase())) {
       boostedScore *= 2.0;
+    }
+    
+    // Boost description matches
+    const desc = (item.short_description || '').toLowerCase();
+    if (queryLower.split(/\s+/).some((w: string) => w.length > 3 && desc.includes(w))) {
+      boostedScore *= 1.3;
     }
     
     // Boost in-stock items
@@ -249,7 +285,12 @@ function combineResults(lexicalResults: any[], semanticResults: any[], query: st
     }
     
     // Boost items with short leadtime
-    if (item.leadtime <= 7) {
+    if (item.leadtime && item.leadtime <= 7) {
+      boostedScore *= 1.1;
+    }
+    
+    // Boost items with valid prices
+    if (item.net_price && item.net_price > 0) {
       boostedScore *= 1.1;
     }
 
@@ -276,10 +317,13 @@ async function enhanceResults(supabase: any, results: any[]) {
     
     return {
       sku: item.vvs_number || item.supplier_item_id,
+      supplier_item_id: item.supplier_item_id,
+      vvs_number: item.vvs_number,
       title: item.short_description,
       description: item.long_description,
       match_score: item.final_score,
       unit_price_ex_vat: unitPrice,
+      net_price: item.net_price,
       unit: item.price_unit || item.ordering_unit_1 || 'stk',
       pack_info: {
         price_quantity: item.price_quantity,

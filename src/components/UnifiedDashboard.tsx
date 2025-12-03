@@ -84,7 +84,34 @@ export default function UnifiedDashboard() {
   };
 
   const handleAnalyzeCase = async (caseItem: Case) => {
+    // DUPLICATE PREVENTION: Check if already processing
+    const processingStatus = (caseItem as any).processing_status;
+    if (processingStatus?.step && processingStatus.step !== 'pending' && processingStatus.step !== 'complete' && processingStatus.step !== 'error') {
+      toast({
+        title: "Allerede i gang",
+        description: "Sagen analyseres allerede. Vent venligst.",
+      });
+      return;
+    }
+
+    // Check if case already has a quote
+    if (caseItem.quotes && caseItem.quotes.length > 0) {
+      toast({
+        title: "Tilbud findes allerede",
+        description: "Der er allerede genereret et tilbud for denne sag.",
+      });
+      return;
+    }
+
     try {
+      // Mark as processing FIRST to prevent duplicate calls
+      await supabase
+        .from('cases')
+        .update({ 
+          processing_status: { step: 'analyzing', progress: 10, message: 'AI analyserer email...' }
+        })
+        .eq('id', caseItem.id);
+
       toast({
         title: "Analyserer...",
         description: "AI analyserer sagen"
@@ -131,6 +158,15 @@ export default function UnifiedDashboard() {
       await loadCases();
     } catch (error: any) {
       console.error('Analysis failed:', error);
+      
+      // Mark as error so user can retry
+      await supabase
+        .from('cases')
+        .update({ 
+          processing_status: { step: 'error', progress: 0, message: error.message || 'Analyse fejlede' }
+        })
+        .eq('id', caseItem.id);
+
       toast({
         title: "Fejl",
         description: error.message || "Analyse fejlede",

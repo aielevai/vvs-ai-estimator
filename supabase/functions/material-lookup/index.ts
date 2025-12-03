@@ -32,21 +32,21 @@ const COMPONENT_SEARCH_MAP: Record<string, string> = {
   'trap_dn32': 'vandlås DN32',
   
   // Sanitær
-  'geberit_duofix_cistern': 'Geberit DuoFix cisterne 6/3L',
+  'geberit_duofix_cistern': 'Geberit DuoFix cisterne',
   'wc_bowl': 'væghængt toilet skål hvid',
   'flush_plate': 'betjeningsplade toilet krom',
-  'faucet_basin': 'håndvaskarmatur krom enkeltgreb',
-  'faucet_shower': 'brusearmatur termostat krom',
+  'faucet_basin': 'håndvaskarmatur krom',
+  'faucet_shower': 'brusearmatur termostat',
   'shower_head': 'brusehoved håndbruser krom',
   
   // Vådrum
-  'wetroom_membrane': 'vådrumsmembran tætningsmiddel',
+  'wetroom_membrane': 'vådrumsmembran',
   'sealing_sleeve_drain': 'tætningsmuffe afløb',
   'sealing_sleeve_pipes': 'tætningsmuffe rør',
   
   // Gulvvarme
-  'manifold_small': 'fordeler 4-vejs gulvvarme',
-  'manifold_medium': 'fordeler 6-vejs gulvvarme',
+  'manifold_small': 'fordeler gulvvarme',
+  'manifold_medium': 'fordeler gulvvarme',
   'floor_heating_pipe': 'gulvvarmerør PEX 16mm',
   'manifold_cabinet': 'fordelerskab gulvvarme',
   
@@ -55,11 +55,11 @@ const COMPONENT_SEARCH_MAP: Record<string, string> = {
   'radiator_600x1200': 'radiator 600x1200mm hvid',
   
   // Finish
-  'mirror_cabinet_60cm': 'spejlskab 60cm LED',
-  'mirror_cabinet_80cm': 'spejlskab 80cm LED',
+  'mirror_cabinet_60cm': 'spejlskab LED',
+  'mirror_cabinet_80cm': 'spejlskab LED',
   
   // Diverse
-  'consumables_small': 'forbrugsartikler VVS sæt',
+  'consumables_small': 'forbrugsartikler VVS',
   'haulage_waste': 'affaldshåndtering',
 };
 
@@ -98,11 +98,11 @@ async function mapBOMToProductsIntelligent(bom: BomLine[], projectType: string):
         console.log(`🔍 Searching for: ${comp.componentKey} → "${searchQuery}"`);
 
         // 3. Use hybrid-search to find best match
-        const { data: searchResults, error: searchError } = await supabaseAdmin.functions.invoke('hybrid-search', {
+        const { data: searchResponse, error: searchError } = await supabaseAdmin.functions.invoke('hybrid-search', {
           body: { 
             query: searchQuery, 
-            limit: 5,
-            similarityThreshold: 0.3
+            topK: 10,
+            includeSemanticSearch: true
           }
         });
 
@@ -110,33 +110,45 @@ async function mapBOMToProductsIntelligent(bom: BomLine[], projectType: string):
           console.error(`Search error for ${comp.componentKey}:`, searchError);
         }
 
-        if (searchResults && Array.isArray(searchResults) && searchResults.length > 0) {
+        // FIX: Correctly parse the response - hybrid-search returns { results: [...] }
+        const searchResults = searchResponse?.results || [];
+        
+        console.log(`📦 Search returned ${searchResults.length} results for ${comp.componentKey}`);
+
+        if (searchResults.length > 0) {
           matchedProduct = searchResults[0];
-          confidence = Number(matchedProduct.similarity || 0.7);
+          confidence = Number(matchedProduct.match_score || 0.7);
 
-          // Cache the match
-          await supabaseAdmin
-            .from('material_matches')
-            .upsert({
-              component_key: comp.componentKey,
-              project_type: projectType,
-              matched_product_code: matchedProduct.supplier_item_id,
-              matched_vvs_number: matchedProduct.vvs_number,
-              confidence,
-              search_query: searchQuery
-            }, { onConflict: 'component_key,project_type' });
+          // Cache the match for future use
+          try {
+            await supabaseAdmin
+              .from('material_matches')
+              .upsert({
+                component_key: comp.componentKey,
+                project_type: projectType,
+                matched_product_code: matchedProduct.supplier_item_id,
+                matched_vvs_number: matchedProduct.vvs_number || matchedProduct.sku,
+                confidence,
+                search_query: searchQuery
+              }, { onConflict: 'component_key,project_type' });
+          } catch (cacheError) {
+            console.log('Cache upsert skipped:', cacheError);
+          }
 
-          console.log(`✅ Match found: ${matchedProduct.supplier_item_id} (${matchedProduct.short_description}) - confidence: ${confidence}`);
+          console.log(`✅ Match found: ${matchedProduct.supplier_item_id || matchedProduct.sku} (${matchedProduct.title}) - confidence: ${confidence.toFixed(2)}`);
+        } else {
+          console.log(`⚠️ No match found for ${comp.componentKey}`);
         }
       }
 
-      // 4. Apply discount if available
-      let finalPrice = Number(matchedProduct?.net_price || 0);
+      // 4. Get price - use net_price from matched product or unit_price_ex_vat
+      let finalPrice = Number(matchedProduct?.net_price || matchedProduct?.unit_price_ex_vat || 0);
       let discountApplied = 0;
 
-      if (matchedProduct?.supplier_item_id) {
+      // Apply discount if available
+      if (matchedProduct?.supplier_item_id && finalPrice > 0) {
         // Extract prefix (first 2 chars) for discount lookup
-        const prefix = matchedProduct.supplier_item_id.substring(0, 2);
+        const prefix = String(matchedProduct.supplier_item_id).substring(0, 2);
         
         const { data: discount } = await supabaseAdmin
           .from('discount_codes')
@@ -154,18 +166,18 @@ async function mapBOMToProductsIntelligent(bom: BomLine[], projectType: string):
       // 5. Build material line
       materials.push({
         component_key: comp.componentKey,
-        product_code: matchedProduct?.supplier_item_id || comp.componentKey,
-        vvs_number: matchedProduct?.vvs_number || null,
-        description: matchedProduct?.short_description || comp.componentKey,
+        product_code: matchedProduct?.supplier_item_id || matchedProduct?.sku || comp.componentKey,
+        vvs_number: matchedProduct?.vvs_number || matchedProduct?.sku || null,
+        description: matchedProduct?.title || matchedProduct?.short_description || comp.componentKey,
         quantity: comp.qty,
-        unit: matchedProduct?.price_unit || comp.unit || 'stk',
+        unit: matchedProduct?.unit || comp.unit || 'stk',
         net_unit_price: finalPrice,
         net_total_price: finalPrice * comp.qty,
         customer_supplied: !!comp.customerSupplied,
-        source: matchedProduct ? 'ai_matched' : 'fallback',
+        source: matchedProduct && finalPrice > 0 ? 'ai_matched' : 'fallback',
         confidence,
         discount_applied: discountApplied,
-        original_price: matchedProduct?.net_price || 0
+        original_price: matchedProduct?.net_price || matchedProduct?.unit_price_ex_vat || 0
       });
 
     } catch (error) {
@@ -175,11 +187,11 @@ async function mapBOMToProductsIntelligent(bom: BomLine[], projectType: string):
       materials.push({
         component_key: comp.componentKey,
         product_code: comp.componentKey,
-        description: comp.componentKey,
+        description: comp.componentKey.replace(/_/g, ' '),
         quantity: comp.qty,
         unit: comp.unit,
-        net_unit_price: 50, // Generic fallback
-        net_total_price: 50 * comp.qty,
+        net_unit_price: 100, // Higher fallback price
+        net_total_price: 100 * comp.qty,
         customer_supplied: !!comp.customerSupplied,
         source: 'fallback',
         confidence: 0.3
@@ -206,19 +218,29 @@ serve(async (req) => {
 
     // Generate BOM
     const bom = generateProjectBOM(projectType, estimatedSize, complexity || 'medium', normalizedSignals);
-    console.log(`Generated BOM with ${bom.length} components`);
+    console.log(`📋 Generated BOM with ${bom.length} components`);
 
     // Map to REAL products with AI search + discounts
     const materialsNet = await mapBOMToProductsIntelligent(bom, projectType);
+    
+    // Calculate totals
+    const matchedCount = materialsNet.filter(m => m.source === 'ai_matched').length;
+    const fallbackCount = materialsNet.filter(m => m.source === 'fallback').length;
     const netTotal = materialsNet.reduce((s, m) => s + m.net_total_price, 0);
     
+    console.log(`✅ Materials: ${matchedCount} matched, ${fallbackCount} fallback`);
     console.log(`✅ Materials NET total: ${netTotal.toFixed(2)} kr`);
 
     return ok({
       materials_net: materialsNet,
       net_total_cost: netTotal,
       project_type: projectType,
-      estimated_size: estimatedSize
+      estimated_size: estimatedSize,
+      stats: {
+        total: materialsNet.length,
+        matched: matchedCount,
+        fallback: fallbackCount
+      }
     });
 
   } catch (error) {

@@ -29,8 +29,35 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
   const draftQuote = caseData.quotes?.find(q => q.status === 'draft');
 
   const handleAnalyze = async () => {
+    // DUPLICATE PREVENTION: Check if already has a quote
+    if (caseData.quotes && caseData.quotes.length > 0) {
+      toast({
+        title: "Tilbud findes allerede",
+        description: "Der er allerede genereret et tilbud for denne sag.",
+      });
+      return;
+    }
+
+    // Check processing status
+    const processingStatus = (caseData as any).processing_status;
+    if (processingStatus?.step && processingStatus.step !== 'pending' && processingStatus.step !== 'complete' && processingStatus.step !== 'error') {
+      toast({
+        title: "Allerede i gang",
+        description: "Sagen analyseres allerede. Vent venligst.",
+      });
+      return;
+    }
+
     setAnalyzing(true);
     try {
+      // Mark as processing FIRST
+      await supabase
+        .from('cases')
+        .update({ 
+          processing_status: { step: 'analyzing', progress: 10, message: 'AI analyserer email...' }
+        })
+        .eq('id', caseData.id);
+
       // 1) Kald analyze-email
       const analyzeRes = await supabase.functions.invoke('analyze-email', {
         body: {
@@ -81,6 +108,15 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
       onUpdate();
     } catch (error: any) {
       console.error('Analysis/Quote error:', error);
+      
+      // Mark as error
+      await supabase
+        .from('cases')
+        .update({ 
+          processing_status: { step: 'error', progress: 0, message: error.message || 'Analyse fejlede' }
+        })
+        .eq('id', caseData.id);
+
       toast({
         title: "Fejl",
         description: error.message || "Kunne ikke analysere sagen",
