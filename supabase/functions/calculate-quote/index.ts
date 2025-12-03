@@ -532,7 +532,22 @@ serve(async (req) => {
 
     console.log(`✅ Saved ${linesWithQuoteId.length} quote lines`);
 
-    // 12) Returnér standardiseret struktur (inkl. convenience-felter)
+    // 12) Opdater case processing_status til complete
+    await supabase
+      .from('cases')
+      .update({ 
+        processing_status: { 
+          step: 'complete', 
+          progress: 100, 
+          message: 'Tilbud klar!' 
+        },
+        status: 'quoted'
+      })
+      .eq('id', caseId);
+
+    console.log('✅ Case processing_status updated to complete');
+
+    // 13) Returnér standardiseret struktur (inkl. convenience-felter)
     return ok({
       quote,
       lines: linesWithQuoteId,
