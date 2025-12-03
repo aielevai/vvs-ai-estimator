@@ -238,12 +238,12 @@ serve(async (req) => {
       materials_net = responseData?.data?.materials_net ?? [];
       
       // HÅRD FEJL hvis ingen materialer for projekter der kræver det
-      if (materials_net.length === 0 && analysis.project_type !== 'service_call') {
+      if ((materials_net?.length ?? 0) === 0 && analysis.project_type !== 'service_call') {
         console.error('❌ No materials returned from lookup');
         return err('Material lookup returned no materials - check components/BOM coverage', 500);
       }
       
-      console.log(`✅ Auto-fetched ${materials_net.length} materials`);
+      console.log(`✅ Auto-fetched ${materials_net?.length ?? 0} materials`);
     } else {
       console.log(`📦 Using provided materials: ${materials_net.length} items`);
     }
