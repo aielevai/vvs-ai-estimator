@@ -4,7 +4,7 @@ import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { CheckCircle, AlertTriangle, Info, Bot, Trash2, Plus, Lightbulb } from "lucide-react";
+import { CheckCircle, AlertTriangle, Info, Bot, Trash2, Plus, Lightbulb, MessageSquare } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { CorrectionDialog } from './CorrectionDialog';
 
@@ -128,23 +128,33 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <div className="p-3 bg-muted/50 rounded-lg">
               <div className="text-xs text-muted-foreground">Projekttype</div>
-              <div className="font-medium text-sm mt-1">{pricingAnalysis.project_type?.replace('_', ' ')}</div>
+              <div className="font-medium text-sm mt-1">
+                {(pricingAnalysis?.project?.type || pricingAnalysis?.project_type || 'Ikke angivet').replace('_', ' ')}
+              </div>
             </div>
             <div className="p-3 bg-muted/50 rounded-lg">
               <div className="text-xs text-muted-foreground">Størrelse</div>
               <div className="font-medium text-sm mt-1">
-                {typeof pricingAnalysis.estimated_size === 'object' 
-                  ? `${pricingAnalysis.estimated_size.value} ${pricingAnalysis.estimated_size.unit}` 
-                  : pricingAnalysis.estimated_size}
+                {(() => {
+                  const size = pricingAnalysis?.project?.estimated_size || pricingAnalysis?.estimated_size;
+                  if (typeof size === 'object' && size?.value) {
+                    return `${size.value} ${size.unit || 'm²'}`;
+                  }
+                  return size || 'Ikke angivet';
+                })()}
               </div>
             </div>
             <div className="p-3 bg-muted/50 rounded-lg">
               <div className="text-xs text-muted-foreground">Kompleksitet</div>
-              <div className="font-medium text-sm mt-1">{pricingAnalysis.complexity}</div>
+              <div className="font-medium text-sm mt-1">
+                {pricingAnalysis?.project?.complexity || pricingAnalysis?.complexity || 'Ikke angivet'}
+              </div>
             </div>
             <div className="p-3 bg-muted/50 rounded-lg">
               <div className="text-xs text-muted-foreground">Timer total</div>
-              <div className="font-medium text-sm mt-1">{pricingAnalysis.laborHours || pricingAnalysis.total_hours} timer</div>
+              <div className="font-medium text-sm mt-1">
+                {quote.pricing_trace?.hours_calculation?.final || quote.labor_hours || pricingAnalysis?.laborHours || 0} timer
+              </div>
             </div>
           </div>
 
@@ -357,14 +367,33 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
         <div className="flex justify-between items-center mb-4">
           <h2 className="font-semibold">Prissammenfatning</h2>
           {caseId && (
-            <Button 
-              size="sm" 
-              onClick={checkForSignificantChanges}
-              className="btn-modern text-xs"
-            >
-              <Lightbulb className="h-3.5 w-3.5" />
-              Gem ændringer
-            </Button>
+            <div className="flex gap-2">
+              <Button 
+                size="sm" 
+                variant="outline"
+                onClick={() => {
+                  setPendingChanges([{
+                    field: 'freeform_note',
+                    original_value: '',
+                    new_value: '',
+                    label: 'Fritekst Note'
+                  }]);
+                  setShowCorrectionDialog(true);
+                }}
+                className="text-xs"
+              >
+                <MessageSquare className="h-3.5 w-3.5 mr-1" />
+                Tilføj AI Note
+              </Button>
+              <Button 
+                size="sm" 
+                onClick={checkForSignificantChanges}
+                className="btn-modern text-xs"
+              >
+                <Lightbulb className="h-3.5 w-3.5 mr-1" />
+                Gem ændringer
+              </Button>
+            </div>
           )}
         </div>
         
@@ -456,11 +485,13 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
           changes={pendingChanges}
           quoteId={quote.id}
           caseId={caseId || ''}
-          projectType={pricingAnalysis?.project_type || ''}
-          estimatedSize={typeof pricingAnalysis?.estimated_size === 'object' 
-            ? pricingAnalysis.estimated_size.value 
-            : (pricingAnalysis?.estimated_size || 0)}
-          complexity={pricingAnalysis?.complexity || 'medium'}
+          projectType={pricingAnalysis?.project?.type || pricingAnalysis?.project_type || ''}
+          estimatedSize={(() => {
+            const size = pricingAnalysis?.project?.estimated_size || pricingAnalysis?.estimated_size;
+            if (typeof size === 'object' && size?.value) return size.value;
+            return typeof size === 'number' ? size : 0;
+          })()}
+          complexity={pricingAnalysis?.project?.complexity || pricingAnalysis?.complexity || 'medium'}
           emailContent={emailContent}
         />
       )}
