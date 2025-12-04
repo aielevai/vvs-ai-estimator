@@ -255,7 +255,26 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
             <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <div className="text-sm font-medium text-muted-foreground">Materialer</div>
-                <Button size="sm" variant="outline" className="h-7 text-xs">
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    const newLine = {
+                      id: `new-${Date.now()}`,
+                      line_type: 'material',
+                      description: 'Nyt materiale',
+                      quantity: 1,
+                      unit_price: 0,
+                      total_price: 0,
+                      unit: 'stk',
+                      quote_id: quote.id
+                    };
+                    const newLines = [...(quote.quote_lines || []), newLine];
+                    setQuote({ ...quote, quote_lines: newLines });
+                    onQuoteUpdate?.({ ...quote, quote_lines: newLines });
+                  }}
+                >
                   <Plus size={12} className="mr-1" />
                   Tilføj
                 </Button>
@@ -365,7 +384,10 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
       {/* Price Summary */}
       <div className="glow-card p-6 slide-up" style={{ animationDelay: '150ms' }}>
         <div className="flex justify-between items-center mb-4">
-          <h2 className="font-semibold">Prissammenfatning</h2>
+          <div>
+            <h2 className="font-semibold">Prissammenfatning</h2>
+            <p className="text-xs text-muted-foreground">Ændringer gemmes automatisk</p>
+          </div>
           {caseId && (
             <div className="flex gap-2">
               <Button 
@@ -391,7 +413,7 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
                 className="btn-modern text-xs"
               >
                 <Lightbulb className="h-3.5 w-3.5 mr-1" />
-                Gem ændringer
+                Lær AI fra ændringer
               </Button>
             </div>
           )}
