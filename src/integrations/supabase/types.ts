@@ -162,6 +162,93 @@ export type Database = {
         }
         Relationships: []
       }
+      correction_rules: {
+        Row: {
+          ai_summary: string | null
+          complexity: string | null
+          confidence: number | null
+          corrected_value: Json | null
+          correction_type: string
+          correction_value: Json
+          created_at: string
+          id: string
+          is_active: boolean | null
+          keywords: string[] | null
+          original_value: Json | null
+          project_type: string | null
+          scope: string | null
+          size_max: number | null
+          size_min: number | null
+          source_case_id: string | null
+          source_quote_id: string | null
+          success_rate: number | null
+          times_applied: number | null
+          updated_at: string
+          user_reasoning: string | null
+        }
+        Insert: {
+          ai_summary?: string | null
+          complexity?: string | null
+          confidence?: number | null
+          corrected_value?: Json | null
+          correction_type: string
+          correction_value: Json
+          created_at?: string
+          id?: string
+          is_active?: boolean | null
+          keywords?: string[] | null
+          original_value?: Json | null
+          project_type?: string | null
+          scope?: string | null
+          size_max?: number | null
+          size_min?: number | null
+          source_case_id?: string | null
+          source_quote_id?: string | null
+          success_rate?: number | null
+          times_applied?: number | null
+          updated_at?: string
+          user_reasoning?: string | null
+        }
+        Update: {
+          ai_summary?: string | null
+          complexity?: string | null
+          confidence?: number | null
+          corrected_value?: Json | null
+          correction_type?: string
+          correction_value?: Json
+          created_at?: string
+          id?: string
+          is_active?: boolean | null
+          keywords?: string[] | null
+          original_value?: Json | null
+          project_type?: string | null
+          scope?: string | null
+          size_max?: number | null
+          size_min?: number | null
+          source_case_id?: string | null
+          source_quote_id?: string | null
+          success_rate?: number | null
+          times_applied?: number | null
+          updated_at?: string
+          user_reasoning?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "correction_rules_source_case_id_fkey"
+            columns: ["source_case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "correction_rules_source_quote_id_fkey"
+            columns: ["source_quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customers: {
         Row: {
           address: string | null
@@ -806,6 +893,7 @@ export type Database = {
       }
       quotes: {
         Row: {
+          applied_corrections: Json | null
           case_id: string | null
           created_at: string | null
           id: string
@@ -825,6 +913,7 @@ export type Database = {
           vat_amount: number | null
         }
         Insert: {
+          applied_corrections?: Json | null
           case_id?: string | null
           created_at?: string | null
           id?: string
@@ -844,6 +933,7 @@ export type Database = {
           vat_amount?: number | null
         }
         Update: {
+          applied_corrections?: Json | null
           case_id?: string | null
           created_at?: string | null
           id?: string

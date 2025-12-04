@@ -30,3 +30,12 @@ verify_jwt = false
 
 [functions.historical-analysis]
 verify_jwt = false
+
+[functions.find-corrections]
+verify_jwt = false
+
+[functions.apply-corrections]
+verify_jwt = false
+
+[functions.save-correction]
+verify_jwt = false

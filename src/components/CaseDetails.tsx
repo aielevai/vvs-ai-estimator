@@ -311,6 +311,8 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
           <EnhancedQuoteViewer 
             quote={caseData.quotes![0]} 
             pricingAnalysis={caseData.extracted_data}
+            caseId={caseData.id}
+            emailContent={caseData.email_content || caseData.description}
             onQuoteUpdate={async (updatedQuote) => {
               await db.updateQuote(updatedQuote.id, updatedQuote);
               onUpdate();

@@ -1,26 +1,78 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { CheckCircle, AlertTriangle, Info, Bot, Trash2, Plus } from "lucide-react";
+import { CheckCircle, AlertTriangle, Info, Bot, Trash2, Plus, Lightbulb } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { CorrectionDialog } from './CorrectionDialog';
 
 interface EnhancedQuoteViewerProps {
   quote: any;
   pricingAnalysis?: any;
   onQuoteUpdate?: (updatedQuote: any) => void;
+  caseId?: string;
+  emailContent?: string;
 }
 
 export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ 
   quote: initialQuote, 
   pricingAnalysis,
-  onQuoteUpdate 
+  onQuoteUpdate,
+  caseId,
+  emailContent
 }) => {
   const [quote, setQuote] = useState(initialQuote);
   const [isExplanationOpen, setIsExplanationOpen] = useState(false);
+  const [showCorrectionDialog, setShowCorrectionDialog] = useState(false);
+  const [pendingChanges, setPendingChanges] = useState<any[]>([]);
+  
+  // Track original values for detecting changes
+  const originalValues = useRef({
+    labor_hours: initialQuote?.labor_hours,
+    subtotal: initialQuote?.subtotal
+  });
+  
+  // Reset original values when initial quote changes
+  useEffect(() => {
+    originalValues.current = {
+      labor_hours: initialQuote?.labor_hours,
+      subtotal: initialQuote?.subtotal
+    };
+    setQuote(initialQuote);
+  }, [initialQuote?.id]);
+  
+  // Detect significant changes and prompt for correction
+  const checkForSignificantChanges = () => {
+    const changes: any[] = [];
+    
+    if (quote.labor_hours !== originalValues.current.labor_hours) {
+      changes.push({
+        field: 'labor_hours',
+        original_value: originalValues.current.labor_hours,
+        new_value: quote.labor_hours,
+        label: 'Arbejdstimer'
+      });
+    }
+    
+    // Check if subtotal changed by more than 5%
+    const subtotalDiff = Math.abs(quote.subtotal - originalValues.current.subtotal) / originalValues.current.subtotal;
+    if (subtotalDiff > 0.05 && changes.length === 0) {
+      changes.push({
+        field: 'subtotal',
+        original_value: originalValues.current.subtotal,
+        new_value: quote.subtotal,
+        label: 'Subtotal'
+      });
+    }
+    
+    if (changes.length > 0) {
+      setPendingChanges(changes);
+      setShowCorrectionDialog(true);
+    }
+  };
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('da-DK', {
       style: 'currency',
@@ -299,10 +351,33 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
         </CardContent>
       </Card>
 
+      {/* Applied Corrections Info */}
+      {quote.applied_corrections && quote.applied_corrections.length > 0 && (
+        <Alert className="border-yellow-500/50 bg-yellow-500/10">
+          <Lightbulb className="h-4 w-4 text-yellow-500" />
+          <AlertDescription>
+            <strong>Lært fra tidligere:</strong> {quote.applied_corrections.length} korrektion(er) anvendt automatisk baseret på tidligere erfaringer.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Price Summary */}
       <Card>
         <CardHeader>
-          <CardTitle>Prissammenfatning</CardTitle>
+          <div className="flex justify-between items-center">
+            <CardTitle>Prissammenfatning</CardTitle>
+            {caseId && (
+              <Button 
+                size="sm" 
+                variant="outline"
+                onClick={checkForSignificantChanges}
+                className="gap-2"
+              >
+                <Lightbulb className="h-4 w-4" />
+                Gem ændringer
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
@@ -439,6 +514,19 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
           </Alert>
         )}
       </div>
+
+      {/* Correction Dialog */}
+      <CorrectionDialog
+        open={showCorrectionDialog}
+        onClose={() => setShowCorrectionDialog(false)}
+        changes={pendingChanges}
+        caseId={caseId || ''}
+        quoteId={quote.id || ''}
+        projectType={pricingAnalysis?.metadata?.project_type || quote.metadata?.project_type || ''}
+        estimatedSize={pricingAnalysis?.metadata?.estimated_size || quote.metadata?.estimated_size || 0}
+        complexity={pricingAnalysis?.metadata?.complexity || quote.metadata?.complexity || 'medium'}
+        emailContent={emailContent}
+      />
     </div>
   );
 };

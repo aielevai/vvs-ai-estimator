@@ -144,6 +144,48 @@ serve(async (req) => {
 
     console.log('📐 Profile loaded:', { type: analysis.project_type, base_hours: profile.base_hours, beta: profile.beta_default });
 
+    // ====== LÆRENDE KORREKTIONS-SYSTEM ======
+    // Find og anvend tidligere lærte rettelser
+    let appliedCorrections: any[] = [];
+    try {
+      // 1) Find matchende rettelser
+      const findResp = await supabase.functions.invoke('find-corrections', {
+        body: {
+          project_type: analysis.project_type,
+          size: analysis.estimatedSize,
+          complexity: analysis.signals.complexity ?? 'medium',
+          email_content: body.email_content ?? ''
+        }
+      });
+      
+      const corrections = findResp.data?.data?.rules ?? [];
+      
+      if (corrections.length > 0) {
+        console.log(`🧠 Found ${corrections.length} matching correction rules`);
+        
+        // 2) Anvend rettelser på analysen
+        const applyResp = await supabase.functions.invoke('apply-corrections', {
+          body: {
+            analysis,
+            rules: corrections
+          }
+        });
+        
+        if (applyResp.data?.data) {
+          const corrected = applyResp.data.data;
+          // Opdater analysis med rettelser
+          if (corrected.analysis) {
+            analysis.signals = corrected.analysis.signals ?? analysis.signals;
+            // Gem hvilke rettelser der blev anvendt
+            appliedCorrections = corrected.applied_rules ?? [];
+            console.log(`✅ Applied ${appliedCorrections.length} corrections`);
+          }
+        }
+      }
+    } catch (e) {
+      console.log('⚠️  Correction system skipped:', e);
+    }
+
     // Historical data (optional)
     let historicalData: any = null;
     try {
@@ -460,6 +502,7 @@ serve(async (req) => {
           valid_until: validUntil.toISOString().split('T')[0],
           pricing_snapshot,
           pricing_trace,
+          applied_corrections: appliedCorrections,
           metadata: {
             project_type: analysis.project_type,
             estimated_size: size,
@@ -489,6 +532,7 @@ serve(async (req) => {
           valid_until: validUntil.toISOString().split('T')[0],
           pricing_snapshot,
           pricing_trace,
+          applied_corrections: appliedCorrections,
           metadata: {
             project_type: analysis.project_type,
             estimated_size: size,
