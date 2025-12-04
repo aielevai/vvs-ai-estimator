@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { db } from "@/lib/supabase-client";
 import { Case } from "@/types";
 import { useToast } from "@/hooks/use-toast";
@@ -14,7 +15,9 @@ import {
   CheckCircle,
   Clock,
   AlertCircle,
-  Trash2
+  Trash2,
+  ChevronDown,
+  Settings
 } from "lucide-react";
 import CaseDetails from "./CaseDetails";
 import { DataUploader } from "./DataUploader";
@@ -357,8 +360,27 @@ export default function UnifiedDashboard() {
           </Card>
         </div>
 
-        {/* Data Uploader */}
-        <DataUploader />
+        {/* Advanced Tools - Collapsible */}
+        <Collapsible>
+          <Card className="vvs-card">
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors">
+                <CardTitle className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Settings className="h-5 w-5" />
+                    Avancerede Værktøjer
+                  </div>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+                </CardTitle>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="pt-0">
+                <DataUploader />
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
 
         {/* Cases List */}
         <Card className="vvs-card">
