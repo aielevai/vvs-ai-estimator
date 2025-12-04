@@ -448,20 +448,22 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
         )}
       </div>
 
-      {/* Correction Dialog */}
-      <CorrectionDialog 
-        open={showCorrectionDialog}
-        onClose={() => setShowCorrectionDialog(false)}
-        changes={pendingChanges}
-        quoteId={quote.id}
-        caseId={caseId || ''}
-        projectType={pricingAnalysis?.project_type || ''}
-        estimatedSize={typeof pricingAnalysis?.estimated_size === 'object' 
-          ? pricingAnalysis.estimated_size.value 
-          : (pricingAnalysis?.estimated_size || 0)}
-        complexity={pricingAnalysis?.complexity || 'medium'}
-        emailContent={emailContent}
-      />
+      {/* Correction Dialog - only render when open to avoid Suspense/hooks issues */}
+      {showCorrectionDialog && (
+        <CorrectionDialog 
+          open={showCorrectionDialog}
+          onClose={() => setShowCorrectionDialog(false)}
+          changes={pendingChanges}
+          quoteId={quote.id}
+          caseId={caseId || ''}
+          projectType={pricingAnalysis?.project_type || ''}
+          estimatedSize={typeof pricingAnalysis?.estimated_size === 'object' 
+            ? pricingAnalysis.estimated_size.value 
+            : (pricingAnalysis?.estimated_size || 0)}
+          complexity={pricingAnalysis?.complexity || 'medium'}
+          emailContent={emailContent}
+        />
+      )}
     </div>
   );
 };
