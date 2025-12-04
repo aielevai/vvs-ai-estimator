@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Skeleton } from "@/components/ui/skeleton";
 import { db } from "@/lib/supabase-client";
 import { Case } from "@/types";
 import { useToast } from "@/hooks/use-toast";
@@ -11,17 +12,48 @@ import {
   RefreshCw, 
   Plus,
   Brain,
-  Calculator,
   CheckCircle,
   Clock,
   AlertCircle,
   Trash2,
   ChevronDown,
-  Settings
+  Settings,
+  Inbox,
+  FileCheck,
+  ThumbsUp,
+  Layers
 } from "lucide-react";
-import CaseDetails from "./CaseDetails";
-import { DataUploader } from "./DataUploader";
 import { supabase } from "@/integrations/supabase/client";
+
+// Lazy load heavy components
+const CaseDetails = lazy(() => import('./CaseDetails'));
+const DataUploader = lazy(() => import('./DataUploader').then(m => ({ default: m.DataUploader })));
+
+// Loading skeleton for stats
+const StatSkeleton = () => (
+  <div className="stat-card">
+    <Skeleton className="h-4 w-20 mb-3" />
+    <Skeleton className="h-10 w-16" />
+  </div>
+);
+
+// Loading skeleton for case list
+const CaseListSkeleton = () => (
+  <div className="space-y-4">
+    {[1, 2, 3].map((i) => (
+      <div key={i} className="case-item p-5">
+        <div className="flex items-start justify-between">
+          <div className="flex-1 space-y-3">
+            <Skeleton className="h-5 w-3/4" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-3 w-1/3" />
+          </div>
+          <Skeleton className="h-9 w-32" />
+        </div>
+      </div>
+    ))}
+  </div>
+);
 
 export default function UnifiedDashboard() {
   const [cases, setCases] = useState<Case[]>([]);
@@ -49,7 +81,6 @@ export default function UnifiedDashboard() {
   useEffect(() => {
     loadCases();
 
-    // FASE 6: Real-time subscription for case updates
     const channel = supabase
       .channel('cases-realtime')
       .on('postgres_changes', {
@@ -58,16 +89,15 @@ export default function UnifiedDashboard() {
         table: 'cases'
       }, (payload) => {
         console.log('📊 Case updated:', payload);
-        loadCases(); // Reload cases on any change
+        loadCases();
 
-        // Auto-open case when quote is ready
         if ((payload.new as any)?.processing_status?.step === 'complete') {
           toast({
             title: "✅ Tilbud Klar!",
             description: `Sag: ${(payload.new as any).subject || 'Ny sag'}`,
             action: (
-              <Button onClick={() => handleCaseClick((payload.new as any).id)}>
-                Åbn Tilbud
+              <Button onClick={() => handleCaseClick((payload.new as any).id)} size="sm">
+                Åbn
               </Button>
             ),
             duration: 10000,
@@ -87,7 +117,6 @@ export default function UnifiedDashboard() {
   };
 
   const handleAnalyzeCase = async (caseItem: Case) => {
-    // DUPLICATE PREVENTION: Check if already processing
     const processingStatus = (caseItem as any).processing_status;
     if (processingStatus?.step && processingStatus.step !== 'pending' && processingStatus.step !== 'complete' && processingStatus.step !== 'error') {
       toast({
@@ -97,7 +126,6 @@ export default function UnifiedDashboard() {
       return;
     }
 
-    // Check if case already has a quote
     if (caseItem.quotes && caseItem.quotes.length > 0) {
       toast({
         title: "Tilbud findes allerede",
@@ -107,7 +135,6 @@ export default function UnifiedDashboard() {
     }
 
     try {
-      // Mark as processing FIRST to prevent duplicate calls
       await supabase
         .from('cases')
         .update({ 
@@ -120,7 +147,6 @@ export default function UnifiedDashboard() {
         description: "AI analyserer sagen"
       });
 
-      // Brug supabase.functions.invoke i stedet for hardcoded fetch
       const analyzeRes = await supabase.functions.invoke('analyze-email', {
         body: {
           emailContent: caseItem.description,
@@ -142,7 +168,6 @@ export default function UnifiedDashboard() {
         description: "Beregner nu tilbud..."
       });
 
-      // Kald automatisk calculate-quote
       const quoteRes = await supabase.functions.invoke('calculate-quote', {
         body: { caseId: caseItem.id }
       });
@@ -153,7 +178,6 @@ export default function UnifiedDashboard() {
       const lineCount = Array.isArray(quoteResult.lines) ? quoteResult.lines.length : 0;
       const total = quoteResult.total ?? quoteResult.quote?.total ?? 0;
 
-      // Update processing_status to complete (backup if backend didn't)
       await supabase
         .from('cases')
         .update({ 
@@ -170,7 +194,6 @@ export default function UnifiedDashboard() {
     } catch (error: any) {
       console.error('Analysis failed:', error);
       
-      // Mark as error so user can retry
       await supabase
         .from('cases')
         .update({ 
@@ -196,7 +219,6 @@ export default function UnifiedDashboard() {
     try {
       setLoading(true);
 
-      // First get all quotes for this case
       const { data: quotes, error: fetchError } = await supabase
         .from('quotes')
         .select('id')
@@ -204,7 +226,6 @@ export default function UnifiedDashboard() {
 
       if (fetchError) throw fetchError;
 
-      // Delete quote_lines first (foreign key constraint)
       if (quotes && quotes.length > 0) {
         for (const quote of quotes) {
           const { error: linesError } = await supabase
@@ -215,7 +236,6 @@ export default function UnifiedDashboard() {
           if (linesError) throw linesError;
         }
 
-        // Then delete quotes
         const { error: quotesError } = await supabase
           .from('quotes')
           .delete()
@@ -224,7 +244,6 @@ export default function UnifiedDashboard() {
         if (quotesError) throw quotesError;
       }
 
-      // Finally delete the case
       const { error: caseError } = await supabase
         .from('cases')
         .delete()
@@ -257,7 +276,6 @@ export default function UnifiedDashboard() {
         description: "Henter nye emails fra Gmail"
       });
 
-      // Brug supabase.functions.invoke
       await supabase.functions.invoke('gmail-sync');
 
       await loadCases();
@@ -278,14 +296,21 @@ export default function UnifiedDashboard() {
 
   if (selectedCase) {
     return (
-      <CaseDetails 
-        case={selectedCase}
-        onBack={() => {
-          setSelectedCase(null);
-          loadCases();
-        }}
-        onUpdate={loadCases}
-      />
+      <Suspense fallback={
+        <div className="min-h-screen bg-background p-8">
+          <Skeleton className="h-16 w-full mb-8" />
+          <Skeleton className="h-96 w-full" />
+        </div>
+      }>
+        <CaseDetails 
+          case={selectedCase}
+          onBack={() => {
+            setSelectedCase(null);
+            loadCases();
+          }}
+          onUpdate={loadCases}
+        />
+      </Suspense>
     );
   }
 
@@ -299,206 +324,218 @@ export default function UnifiedDashboard() {
   return (
     <div className="min-h-screen bg-background">
       {/* Modern Header */}
-      <div className="vvs-header py-8">
+      <header className="modern-header">
         <div className="vvs-container">
           <div className="flex items-center justify-between">
-            <div>
+            <div className="fade-in">
               <h1 className="text-3xl font-bold tracking-tight">Valentin VVS</h1>
-              <p className="text-primary-foreground/80 mt-1">Intelligent Tilbudssystem</p>
+              <p className="text-background/70 mt-1 text-sm">Intelligent Tilbudssystem</p>
             </div>
-            <div className="flex gap-3">
-              <Button 
-                onClick={triggerGmailSync}
-                variant="outline"
-                className="bg-white/10 border-white/20 text-white hover:bg-white/20"
-              >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Synkroniser Gmail
-              </Button>
-            </div>
+            <Button 
+              onClick={triggerGmailSync}
+              className="btn-modern-outline bg-background/10 border-background/20 text-background hover:bg-background/20"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Synkroniser
+            </Button>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className="vvs-container py-8 space-y-6">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="vvs-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Sager</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{stats.total}</div>
-            </CardContent>
-          </Card>
+      <div className="vvs-container py-8 space-y-8">
+        {/* Bento Stats Grid */}
+        {loading ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatSkeleton />
+            <StatSkeleton />
+            <StatSkeleton />
+            <StatSkeleton />
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 fade-in">
+            <div className="stat-card md:col-span-2 md:row-span-2">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground font-medium">Total Sager</p>
+                  <p className="text-5xl font-bold mt-2 tracking-tight">{stats.total}</p>
+                </div>
+                <div className="p-3 bg-muted rounded-xl">
+                  <Layers className="h-6 w-6 text-muted-foreground" />
+                </div>
+              </div>
+              <div className="mt-6 pt-4 border-t border-border">
+                <p className="text-xs text-muted-foreground">
+                  Aktive projekter i systemet
+                </p>
+              </div>
+            </div>
 
-          <Card className="vvs-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Nye</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold text-blue-600">{stats.new}</div>
-            </CardContent>
-          </Card>
+            <div className="stat-card">
+              <div className="flex items-center justify-between mb-2">
+                <Inbox className="h-5 w-5 text-blue-500" />
+              </div>
+              <p className="text-sm text-muted-foreground">Nye</p>
+              <p className="text-3xl font-bold tracking-tight text-blue-600">{stats.new}</p>
+            </div>
 
-          <Card className="vvs-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Tilbud Sendt</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold text-green-600">{stats.quoted}</div>
-            </CardContent>
-          </Card>
+            <div className="stat-card">
+              <div className="flex items-center justify-between mb-2">
+                <FileCheck className="h-5 w-5 text-green-500" />
+              </div>
+              <p className="text-sm text-muted-foreground">Tilbud Sendt</p>
+              <p className="text-3xl font-bold tracking-tight text-green-600">{stats.quoted}</p>
+            </div>
 
-          <Card className="vvs-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Godkendt</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold text-emerald-600">{stats.approved}</div>
-            </CardContent>
-          </Card>
-        </div>
+            <div className="stat-card md:col-span-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Godkendt</p>
+                  <p className="text-3xl font-bold tracking-tight text-emerald-600">{stats.approved}</p>
+                </div>
+                <div className="p-2 bg-emerald-100 rounded-lg">
+                  <ThumbsUp className="h-5 w-5 text-emerald-600" />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Advanced Tools - Collapsible */}
         <Collapsible>
-          <Card className="vvs-card">
+          <div className="glow-card">
             <CollapsibleTrigger asChild>
-              <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors">
-                <CardTitle className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Settings className="h-5 w-5" />
-                    Avancerede Værktøjer
+              <div className="p-5 cursor-pointer hover:bg-muted/30 transition-colors flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-muted rounded-lg">
+                    <Settings className="h-4 w-4 text-muted-foreground" />
                   </div>
-                  <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
-                </CardTitle>
-              </CardHeader>
+                  <span className="font-medium">Avancerede Værktøjer</span>
+                </div>
+                <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform duration-200 [[data-state=open]_&]:rotate-180" />
+              </div>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <CardContent className="pt-0">
-                <DataUploader />
-              </CardContent>
+              <div className="px-5 pb-5 pt-0 border-t border-border">
+                <Suspense fallback={<Skeleton className="h-40 w-full mt-4" />}>
+                  <DataUploader />
+                </Suspense>
+              </div>
             </CollapsibleContent>
-          </Card>
+          </div>
         </Collapsible>
 
         {/* Cases List */}
-        <Card className="vvs-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-5 w-5" />
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              <Clock className="h-5 w-5 text-muted-foreground" />
               Aktive Sager
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="text-center py-8">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-                <p className="mt-4 text-muted-foreground">Indlæser sager...</p>
+            </h2>
+            <span className="text-sm text-muted-foreground">{cases.length} sager</span>
+          </div>
+
+          {loading ? (
+            <CaseListSkeleton />
+          ) : cases.length === 0 ? (
+            <div className="glow-card p-12 text-center slide-up">
+              <div className="p-4 bg-muted rounded-full w-fit mx-auto mb-4">
+                <AlertCircle className="h-8 w-8 text-muted-foreground" />
               </div>
-            ) : cases.length === 0 ? (
-              <div className="text-center py-12">
-                <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground">Ingen sager endnu</p>
-                <Button 
-                  onClick={triggerGmailSync}
-                  className="mt-4 vvs-button-primary"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Hent fra Gmail
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {cases.map((caseItem) => {
-                  const processingStatus = (caseItem as any).processing_status;
-                  const isProcessing = processingStatus && processingStatus.step !== 'complete' && processingStatus.step !== 'pending';
-                  
-                  return (
-                    <div
-                      key={caseItem.id}
-                      className="border border-border rounded-lg p-4 hover:bg-muted/50 transition-colors cursor-pointer"
-                      onClick={() => handleCaseClick(caseItem.id)}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <h3 className="font-semibold text-lg">{caseItem.subject || 'Ingen emne'}</h3>
-                            <Badge className={`vvs-status-${caseItem.status}`}>
-                              {caseItem.status}
+              <p className="text-muted-foreground mb-4">Ingen sager endnu</p>
+              <Button onClick={triggerGmailSync} className="btn-modern">
+                <Plus className="h-4 w-4" />
+                Hent fra Gmail
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {cases.map((caseItem, index) => {
+                const processingStatus = (caseItem as any).processing_status;
+                const isProcessing = processingStatus && processingStatus.step !== 'complete' && processingStatus.step !== 'pending';
+                
+                return (
+                  <div
+                    key={caseItem.id}
+                    className="case-item slide-up"
+                    style={{ animationDelay: `${index * 50}ms` }}
+                    onClick={() => handleCaseClick(caseItem.id)}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                          <h3 className="font-semibold truncate">{caseItem.subject || 'Ingen emne'}</h3>
+                          <Badge className={`vvs-status-${caseItem.status} text-xs`}>
+                            {caseItem.status}
+                          </Badge>
+                          {caseItem.urgency !== 'normal' && (
+                            <Badge className={`vvs-urgency-${caseItem.urgency} text-xs`}>
+                              {caseItem.urgency}
                             </Badge>
-                            {caseItem.urgency !== 'normal' && (
-                              <Badge className={`vvs-urgency-${caseItem.urgency}`}>
-                                {caseItem.urgency}
-                              </Badge>
-                            )}
-                          </div>
-
-                          {/* FASE 6: Processing status indicator */}
-                          {isProcessing && (
-                            <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-md border border-blue-200 dark:border-blue-900">
-                              <div className="flex items-center gap-2 mb-2">
-                                <Clock className="h-4 w-4 animate-spin text-blue-600" />
-                                <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
-                                  {processingStatus.message}
-                                </span>
-                              </div>
-                              <div className="w-full bg-blue-100 dark:bg-blue-900/30 rounded-full h-2">
-                                <div 
-                                  className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                                  style={{ width: `${processingStatus.progress || 0}%` }}
-                                />
-                              </div>
-                            </div>
                           )}
-
-                          <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
-                            {caseItem.description}
-                          </p>
-                          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                            <span>{formatDate(caseItem.created_at)}</span>
-                            {caseItem.address && <span>📍 {caseItem.address}</span>}
-                          </div>
                         </div>
-                        <div className="flex flex-col items-end gap-2 ml-4">
-                          <div className="flex items-center gap-2">
-                            {caseItem.status === 'new' && !isProcessing && (
-                              <Button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAnalyzeCase(caseItem);
-                                }}
-                                size="sm"
-                                className="vvs-button-primary"
-                              >
-                                <Brain className="h-4 w-4 mr-2" />
-                                Start AI Analyse
-                              </Button>
-                            )}
-                          </div>
-                          <Button
-                            onClick={(e) => handleDeleteCase(caseItem.id, e)}
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                          {caseItem.quotes && caseItem.quotes.length > 0 && (
-                            <div className="flex items-center gap-2 text-green-600 text-sm">
-                              <CheckCircle className="h-4 w-4" />
-                              <span>Tilbud {caseItem.quotes[0].status === 'draft' ? 'draft' : 'genereret'}</span>
+
+                        {isProcessing && (
+                          <div className="mb-3 p-3 bg-muted rounded-lg processing-glow">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Clock className="h-4 w-4 animate-spin text-foreground/70" />
+                              <span className="text-sm font-medium">
+                                {processingStatus.message}
+                              </span>
                             </div>
-                          )}
+                            <div className="w-full bg-border rounded-full h-1.5">
+                              <div 
+                                className="bg-foreground h-1.5 rounded-full transition-all duration-500"
+                                style={{ width: `${processingStatus.progress || 0}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
+                          {caseItem.description}
+                        </p>
+                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                          <span>{formatDate(caseItem.created_at)}</span>
+                          {caseItem.address && <span>📍 {caseItem.address}</span>}
                         </div>
                       </div>
+                      
+                      <div className="flex flex-col items-end gap-2 shrink-0">
+                        {caseItem.status === 'new' && !isProcessing && (
+                          <Button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAnalyzeCase(caseItem);
+                            }}
+                            size="sm"
+                            className="btn-modern text-xs"
+                          >
+                            <Brain className="h-3.5 w-3.5" />
+                            AI Analyse
+                          </Button>
+                        )}
+                        <Button
+                          onClick={(e) => handleDeleteCase(caseItem.id, e)}
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                        {caseItem.quotes && caseItem.quotes.length > 0 && (
+                          <div className="flex items-center gap-1.5 text-green-600 text-xs">
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            <span>Tilbud klar</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

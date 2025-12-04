@@ -1,17 +1,19 @@
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Case } from "@/types";
 import { formatDate, formatCurrency, getProjectTypeLabel } from "@/lib/valentin-config";
 import { db } from "@/lib/supabase-client";
 import { ArrowLeft, Brain, Calculator, CheckCircle, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import QuoteViewer from "./QuoteViewer";
-import { EnhancedQuoteViewer } from "./EnhancedQuoteViewer";
-import SmartQuoteWizard from "./SmartQuoteWizard";
 import { supabase } from "@/integrations/supabase/client";
+
+// Lazy load heavy components
+const EnhancedQuoteViewer = lazy(() => import('./EnhancedQuoteViewer').then(m => ({ default: m.EnhancedQuoteViewer })));
+const SmartQuoteWizard = lazy(() => import('./SmartQuoteWizard'));
 
 interface CaseDetailsProps {
   case: Case;
@@ -29,7 +31,6 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
   const draftQuote = caseData.quotes?.find(q => q.status === 'draft');
 
   const handleAnalyze = async () => {
-    // DUPLICATE PREVENTION: Check if already has a quote
     if (caseData.quotes && caseData.quotes.length > 0) {
       toast({
         title: "Tilbud findes allerede",
@@ -38,7 +39,6 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
       return;
     }
 
-    // Check processing status
     const processingStatus = (caseData as any).processing_status;
     if (processingStatus?.step && processingStatus.step !== 'pending' && processingStatus.step !== 'complete' && processingStatus.step !== 'error') {
       toast({
@@ -50,7 +50,6 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
 
     setAnalyzing(true);
     try {
-      // Mark as processing FIRST
       await supabase
         .from('cases')
         .update({ 
@@ -58,7 +57,6 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
         })
         .eq('id', caseData.id);
 
-      // 1) Kald analyze-email
       const analyzeRes = await supabase.functions.invoke('analyze-email', {
         body: {
           emailContent: caseData.description || caseData.email_content,
@@ -73,7 +71,6 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
 
       const analysisResult = analyzeRes.data;
 
-      // 2) Gem extracted_data på casen
       await db.updateCase(caseData.id, {
         extracted_data: analysisResult,
         status: 'analyzed'
@@ -84,7 +81,6 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
         description: "Beregner nu tilbud..."
       });
 
-      // 3) Kald automatisk calculate-quote
       const quoteRes = await supabase.functions.invoke('calculate-quote', {
         body: { caseId: caseData.id }
       });
@@ -95,11 +91,9 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
 
       const quoteResult = quoteRes.data;
 
-      // Standardiserede feltnavne fra backend
       const lineCount = Array.isArray(quoteResult.lines) ? quoteResult.lines.length : 0;
       const total = quoteResult.total ?? quoteResult.quote?.total ?? 0;
 
-      // Update processing_status to complete (backup if backend didn't)
       await supabase
         .from('cases')
         .update({ 
@@ -112,12 +106,10 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
         description: `Oprettet med ${lineCount} linjer (${total.toLocaleString('da-DK')} kr)`
       });
 
-      // 4) Hent opdateret case-data og vis tilbud
       onUpdate();
     } catch (error: any) {
       console.error('Analysis/Quote error:', error);
       
-      // Mark as error
       await supabase
         .from('cases')
         .update({ 
@@ -135,31 +127,31 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
     }
   };
 
-
   const hasQuote = caseData.quotes && caseData.quotes.length > 0;
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="vvs-header text-white py-6">
+      {/* Modern Header */}
+      <header className="modern-header">
         <div className="vvs-container">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4 fade-in">
             <Button 
               variant="ghost" 
               size="sm" 
               onClick={onBack}
-              className="text-white hover:bg-white/20"
+              className="text-background hover:bg-background/10"
             >
               <ArrowLeft className="h-4 w-4 mr-2" />
               Tilbage
             </Button>
-            <div>
-              <h1 className="text-2xl font-bold">{caseData.subject || 'Sag Detaljer'}</h1>
+            <div className="border-l border-background/20 pl-4">
+              <h1 className="text-xl font-semibold truncate max-w-md">{caseData.subject || 'Sag Detaljer'}</h1>
               <div className="flex items-center gap-2 mt-1">
-                <Badge className={`vvs-status-${caseData.status}`}>
+                <Badge className={`vvs-status-${caseData.status} text-xs`}>
                   {caseData.status}
                 </Badge>
                 {caseData.urgency !== 'normal' && (
-                  <Badge className={`vvs-urgency-${caseData.urgency}`}>
+                  <Badge className={`vvs-urgency-${caseData.urgency} text-xs`}>
                     {caseData.urgency}
                   </Badge>
                 )}
@@ -167,43 +159,41 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
             </div>
           </div>
         </div>
-      </div>
+      </header>
 
       <div className="vvs-container py-8 space-y-6">
         {/* Case Information */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Sag Information</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <div className="glow-card p-6 slide-up">
+          <h2 className="text-lg font-semibold mb-4">Sag Information</h2>
+          <div className="space-y-4">
             <div>
-              <h4 className="font-medium mb-2">Beskrivelse</h4>
-              <p className="text-muted-foreground">{caseData.description}</p>
+              <h4 className="text-sm font-medium text-muted-foreground mb-1">Beskrivelse</h4>
+              <p className="text-foreground">{caseData.description}</p>
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <h4 className="font-medium mb-1">Oprettet</h4>
-                <p className="text-sm text-muted-foreground">{formatDate(caseData.created_at)}</p>
+                <h4 className="text-sm font-medium text-muted-foreground mb-1">Oprettet</h4>
+                <p className="text-sm">{formatDate(caseData.created_at)}</p>
               </div>
               
               {caseData.address && (
                 <div>
-                  <h4 className="font-medium mb-1">Adresse</h4>
-                  <p className="text-sm text-muted-foreground">{caseData.address}</p>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">Adresse</h4>
+                  <p className="text-sm">{caseData.address}</p>
                 </div>
               )}
             </div>
 
             <Separator />
 
-            <div className="flex gap-3">
+            <div className="flex gap-3 flex-wrap">
               {!hasQuote && (
                 <Button 
                   onClick={() => setShowWizard(true)} 
-                  className="vvs-button-primary"
+                  className="btn-modern"
                 >
-                  <Sparkles className="h-4 w-4 mr-2" />
+                  <Sparkles className="h-4 w-4" />
                   Start Smart Tilbud Generator
                 </Button>
               )}
@@ -211,33 +201,31 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
               {hasDraftQuote && !showWizard && (
                 <Button 
                   onClick={() => setShowWizard(true)} 
-                  variant="outline"
+                  className="btn-modern-outline"
                 >
-                  <Calculator className="h-4 w-4 mr-2" />
+                  <Calculator className="h-4 w-4" />
                   Rediger Draft
                 </Button>
               )}
 
               {hasQuote && !hasDraftQuote && (
-                <div className="flex items-center gap-2 text-green-600">
+                <div className="flex items-center gap-2 text-green-600 text-sm">
                   <CheckCircle className="h-4 w-4" />
-                  <span className="text-sm font-medium">Tilbud genereret</span>
+                  <span className="font-medium">Tilbud genereret</span>
                 </div>
               )}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
         {/* AI Analysis Results */}
         {caseData.extracted_data && (
-          <Card>
-            <CardHeader>
-              <CardTitle>AI Analyse Resultat</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <div className="glow-card p-6 slide-up" style={{ animationDelay: '100ms' }}>
+            <h2 className="text-lg font-semibold mb-4">AI Analyse Resultat</h2>
+            <div className="space-y-4">
               {caseData.extracted_data.customer && (
                 <div>
-                  <h4 className="font-medium mb-2">Kunde Information</h4>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-2">Kunde Information</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                     {caseData.extracted_data.customer.name && (
                       <div><span className="font-medium">Navn:</span> {caseData.extracted_data.customer.name}</div>
@@ -257,7 +245,7 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
 
               {caseData.extracted_data.project && (
                 <div>
-                  <h4 className="font-medium mb-2">Projekt Detaljer</h4>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-2">Projekt Detaljer</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                     <div><span className="font-medium">Type:</span> {getProjectTypeLabel(caseData.extracted_data.project.type)}</div>
                     <div>
@@ -281,7 +269,7 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
 
               {caseData.extracted_data.pricing_hints && (
                 <div>
-                  <h4 className="font-medium mb-2">Prisberegning Hints</h4>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-2">Prisberegning Hints</h4>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
                     <div><span className="font-medium">Estimerede timer:</span> {caseData.extracted_data.pricing_hints.base_hours_estimate}</div>
                     <div><span className="font-medium">Kompleksitet multiplikator:</span> {caseData.extracted_data.pricing_hints.complexity_multiplier}x</div>
@@ -289,35 +277,39 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         )}
 
         {/* Smart Quote Wizard */}
         {showWizard && (
-          <SmartQuoteWizard
-            caseData={caseData}
-            existingQuote={draftQuote}
-            onComplete={() => {
-              setShowWizard(false);
-              onUpdate();
-            }}
-            onCancel={() => setShowWizard(false)}
-          />
+          <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+            <SmartQuoteWizard
+              caseData={caseData}
+              existingQuote={draftQuote}
+              onComplete={() => {
+                setShowWizard(false);
+                onUpdate();
+              }}
+              onCancel={() => setShowWizard(false)}
+            />
+          </Suspense>
         )}
 
         {/* Enhanced Quote Viewer with inline editing */}
         {hasQuote && (
-          <EnhancedQuoteViewer 
-            quote={caseData.quotes![0]} 
-            pricingAnalysis={caseData.extracted_data}
-            caseId={caseData.id}
-            emailContent={caseData.email_content || caseData.description}
-            onQuoteUpdate={async (updatedQuote) => {
-              await db.updateQuote(updatedQuote.id, updatedQuote);
-              onUpdate();
-            }}
-          />
+          <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+            <EnhancedQuoteViewer 
+              quote={caseData.quotes![0]} 
+              pricingAnalysis={caseData.extracted_data}
+              caseId={caseData.id}
+              emailContent={caseData.email_content || caseData.description}
+              onQuoteUpdate={async (updatedQuote) => {
+                await db.updateQuote(updatedQuote.id, updatedQuote);
+                onUpdate();
+              }}
+            />
+          </Suspense>
         )}
       </div>
     </div>
