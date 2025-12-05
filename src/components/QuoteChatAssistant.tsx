@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Send, Sparkles, Search, Plus, Loader2 } from "lucide-react";
+import { Send, Sparkles, Plus, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 interface Message {
@@ -31,7 +31,7 @@ export default function QuoteChatAssistant({
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [discounts, setDiscounts] = useState<Record<string, number>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -42,17 +42,54 @@ export default function QuoteChatAssistant({
     scrollToBottom();
   }, [messages]);
 
+  // Load discounts on mount
+  useEffect(() => {
+    const loadDiscounts = async () => {
+      const { data } = await supabase
+        .from('discount_codes')
+        .select('discount_group, discount_percentage');
+      
+      if (data) {
+        const discountMap: Record<string, number> = {};
+        data.forEach(d => {
+          if (d.discount_group) {
+            discountMap[d.discount_group] = d.discount_percentage;
+          }
+        });
+        setDiscounts(discountMap);
+      }
+    };
+    loadDiscounts();
+  }, []);
+
+  const getDiscountedPrice = (material: any): number => {
+    const basePrice = material.unit_price_ex_vat || material.net_price || material.gross_price || 0;
+    const prefix = (material.sku || material.supplier_item_id || '').substring(0, 2);
+    const discountPct = discounts[prefix] || 0;
+    return basePrice * (1 - discountPct / 100);
+  };
+
   const searchMaterials = async (query: string) => {
-    const { data, error } = await supabase
-      .from('enhanced_supplier_prices')
-      .select('*')
-      .or(`short_description.ilike.%${query}%,long_description.ilike.%${query}%,normalized_text.ilike.%${query}%`)
-      .limit(10);
-    
-    if (!error && data) {
-      return data;
+    try {
+      // Use hybrid-search Edge Function - same as system
+      const { data, error } = await supabase.functions.invoke('hybrid-search', {
+        body: { 
+          query: query, 
+          topK: 10,
+          includeSemanticSearch: true
+        }
+      });
+      
+      if (!error && data?.results) {
+        return data.results;
+      }
+      
+      console.error('hybrid-search error:', error);
+      return [];
+    } catch (err) {
+      console.error('Search error:', err);
+      return [];
     }
-    return [];
   };
 
   const handleSend = async () => {
@@ -64,46 +101,28 @@ export default function QuoteChatAssistant({
     setLoading(true);
 
     try {
-      // Check if it's a search query
+      // Extract search query from user message
+      let searchQuery = userMessage;
+      
       if (userMessage.toLowerCase().includes('søg') || userMessage.toLowerCase().includes('find')) {
-        const searchQuery = userMessage.replace(/søg|find|efter/gi, '').trim();
-        const results = await searchMaterials(searchQuery);
-        
-        setSearchResults(results);
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: `Jeg fandt ${results.length} produkter der matcher "${searchQuery}". Se resultaterne nedenfor.`,
-          materials: results
-        }]);
-      } 
-      // Check if it's an add command
-      else if (userMessage.toLowerCase().includes('tilføj')) {
-        const searchQuery = userMessage.replace(/tilføj/gi, '').trim();
-        const results = await searchMaterials(searchQuery);
-        
-        if (results.length > 0) {
-          setMessages(prev => [...prev, {
-            role: 'assistant',
-            content: `Fandt ${results.length} produkter til "${searchQuery}". Vælg hvilke du vil tilføje:`,
-            materials: results.slice(0, 5)
-          }]);
-          setSearchResults(results.slice(0, 5));
-        } else {
-          setMessages(prev => [...prev, {
-            role: 'assistant',
-            content: `Kunne ikke finde produkter der matcher "${searchQuery}". Prøv at søge mere specifikt.`
-          }]);
-        }
+        searchQuery = userMessage.replace(/søg|find|efter/gi, '').trim();
+      } else if (userMessage.toLowerCase().includes('tilføj')) {
+        searchQuery = userMessage.replace(/tilføj/gi, '').trim();
       }
-      // General query
-      else {
-        const results = await searchMaterials(userMessage);
+
+      const results = await searchMaterials(searchQuery);
+      
+      if (results.length > 0) {
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: `Her er ${results.length} relevante produkter:`,
+          content: `Fandt ${results.length} produkter der matcher "${searchQuery}":`,
           materials: results.slice(0, 5)
         }]);
-        setSearchResults(results.slice(0, 5));
+      } else {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `Kunne ikke finde produkter der matcher "${searchQuery}". Prøv at søge mere specifikt.`
+        }]);
       }
     } catch (error) {
       console.error('Chat error:', error);
@@ -117,22 +136,31 @@ export default function QuoteChatAssistant({
   };
 
   const handleAddMaterial = (material: any) => {
+    const discountedPrice = getDiscountedPrice(material);
+    
     if (onMaterialsUpdated) {
       onMaterialsUpdated([{
-        supplier_item_id: material.supplier_item_id,
-        description: material.short_description,
+        supplier_item_id: material.sku || material.supplier_item_id,
+        vvs_number: material.sku || material.vvs_number,
+        description: material.title || material.short_description,
         quantity: 1,
-        unit_price: material.net_price || material.gross_price,
-        unit: material.price_unit,
-        total_price: material.net_price || material.gross_price,
+        unit_price: discountedPrice,
+        unit: material.unit || 'stk',
+        total_price: discountedPrice,
+        source: 'chat_assistant',
         validated: true
       }]);
     }
     
     setMessages(prev => [...prev, {
       role: 'assistant',
-      content: `✅ Tilføjet: ${material.short_description} (${material.net_price || material.gross_price} kr)`
+      content: `✅ Tilføjet: ${material.title || material.short_description} (${discountedPrice.toFixed(2)} kr)`
     }]);
+  };
+
+  const formatPrice = (material: any): string => {
+    const price = getDiscountedPrice(material);
+    return `${price.toFixed(2)} kr`;
   };
 
   return (
@@ -161,7 +189,9 @@ export default function QuoteChatAssistant({
                     {msg.materials.map((material, midx) => (
                       <div key={midx} className="bg-background rounded p-2 text-xs space-y-1">
                         <div className="font-medium flex items-center justify-between">
-                          <span>{material.short_description}</span>
+                          <span className="truncate max-w-[180px]">
+                            {material.title || material.short_description}
+                          </span>
                           <Button
                             size="sm"
                             variant="ghost"
@@ -172,9 +202,9 @@ export default function QuoteChatAssistant({
                           </Button>
                         </div>
                         <div className="text-muted-foreground flex items-center justify-between">
-                          <span>{material.supplier_item_id}</span>
+                          <span>{material.sku || material.supplier_item_id}</span>
                           <Badge variant="secondary" className="text-xs">
-                            {material.net_price || material.gross_price} kr
+                            {formatPrice(material)}
                           </Badge>
                         </div>
                       </div>
