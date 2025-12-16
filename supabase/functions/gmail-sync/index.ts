@@ -11,9 +11,6 @@ const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const supabase = supabaseAdmin;
 
-// Max age for emails to process (in minutes)
-const MAX_EMAIL_AGE_MINUTES = 30;
-
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -23,6 +20,91 @@ serve(async (req) => {
   try {
     console.log('Starting Gmail sync...');
 
+    // ============================================
+    // STEP 0: Retry failed cases (max 3 retries)
+    // ============================================
+    const { data: failedCases } = await supabase
+      .from('cases')
+      .select('id, subject, processing_status')
+      .filter('processing_status->>step', 'eq', 'error');
+
+    if (failedCases && failedCases.length > 0) {
+      console.log(`🔄 Found ${failedCases.length} failed cases to retry`);
+      
+      for (const failedCase of failedCases) {
+        const retries = (failedCase.processing_status as any)?.retries || 0;
+        
+        if (retries >= 3) {
+          console.log(`⏭️ Case ${failedCase.id} has exceeded max retries (${retries}), skipping`);
+          continue;
+        }
+
+        console.log(`🔄 Retrying case ${failedCase.id} (attempt ${retries + 1}/3)`);
+
+        // Update status to retrying
+        await supabase.from('cases').update({
+          processing_status: {
+            step: 'analyzing',
+            progress: 10,
+            message: `Prøver igen (forsøg ${retries + 1}/3)...`,
+            retries: retries + 1
+          }
+        }).eq('id', failedCase.id);
+
+        try {
+          // Retry calculate-quote
+          const quoteResponse = await fetch(`${supabaseUrl}/functions/v1/calculate-quote`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ caseId: failedCase.id }),
+          });
+
+          if (quoteResponse.ok) {
+            const quoteData = await quoteResponse.json();
+            console.log(`✅ Retry successful for case ${failedCase.id}`);
+            
+            await supabase.from('cases').update({
+              status: 'quoted',
+              processing_status: {
+                step: 'complete',
+                progress: 100,
+                message: 'Tilbud klar!'
+              }
+            }).eq('id', failedCase.id);
+          } else {
+            const errorText = await quoteResponse.text();
+            console.error(`❌ Retry failed for case ${failedCase.id}:`, errorText);
+            
+            await supabase.from('cases').update({
+              processing_status: {
+                step: 'error',
+                progress: 0,
+                message: `Fejl: ${errorText.substring(0, 100)}`,
+                retries: retries + 1
+              }
+            }).eq('id', failedCase.id);
+          }
+        } catch (retryError) {
+          console.error(`❌ Retry exception for case ${failedCase.id}:`, retryError);
+          await supabase.from('cases').update({
+            processing_status: {
+              step: 'error',
+              progress: 0,
+              message: 'Fejl ved retry',
+              retries: retries + 1
+            }
+          }).eq('id', failedCase.id);
+        }
+      }
+    }
+
+    // ============================================
+    // STEP 1: Gmail sync - process new emails
+    // ============================================
+    
     // Get Gmail credentials from Supabase secrets
     const clientId = Deno.env.get('GMAIL_CLIENT_ID');
     const clientSecret = Deno.env.get('GMAIL_CLIENT_SECRET');
@@ -106,7 +188,8 @@ serve(async (req) => {
       
       return new Response(JSON.stringify({ 
         message: 'No new emails found',
-        processed: 0 
+        processed: 0,
+        retriedFailed: failedCases?.length || 0
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -114,16 +197,25 @@ serve(async (req) => {
 
     console.log(`Found ${messages.length} emails to process`);
 
-    // Calculate cutoff time for old emails
-    const emailAgeCutoff = new Date(Date.now() - MAX_EMAIL_AGE_MINUTES * 60 * 1000);
-
-    // Process each email
+    // Process each email - NO AGE FILTER, email_message_id uniqueness is sufficient
     let processedCount = 0;
-    let skippedOld = 0;
     let skippedExisting = 0;
     
     for (const message of messages) {
       try {
+        // Check if this email was already processed using message ID FIRST (before fetching full email)
+        const { data: existingCase } = await supabase
+          .from('cases')
+          .select('id')
+          .eq('email_message_id', message.id)
+          .maybeSingle();
+
+        if (existingCase) {
+          console.log(`📋 Email ${message.id} already processed, skipping`);
+          skippedExisting++;
+          continue;
+        }
+
         // Get full email details
         const emailResponse = await fetch(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
@@ -151,14 +243,6 @@ serve(async (req) => {
         const from = fromHeader?.value || 'Unknown Sender';
         const receivedDate = dateHeader?.value || new Date().toISOString();
 
-        // Parse email date and check if too old
-        const emailDate = new Date(receivedDate);
-        if (emailDate < emailAgeCutoff) {
-          console.log(`⏭️ Email ${message.id} is too old (${emailDate.toISOString()}), skipping`);
-          skippedOld++;
-          continue;
-        }
-
         // Extract email body
         let body = '';
         if (emailData.payload?.body?.data) {
@@ -170,19 +254,6 @@ serve(async (req) => {
               break;
             }
           }
-        }
-
-        // Check if this email was already processed using message ID
-        const { data: existingCase } = await supabase
-          .from('cases')
-          .select('id')
-          .eq('email_message_id', message.id)
-          .maybeSingle();
-
-        if (existingCase) {
-          console.log(`📋 Email ${message.id} already processed, skipping`);
-          skippedExisting++;
-          continue;
         }
 
         // Create new case
@@ -201,7 +272,12 @@ serve(async (req) => {
               fullPayload: emailData
             }),
             status: 'new',
-            urgency: 'normal'
+            urgency: 'normal',
+            processing_status: {
+              step: 'analyzing',
+              progress: 10,
+              message: 'AI analyserer email...'
+            }
           })
           .select()
           .single();
@@ -219,17 +295,11 @@ serve(async (req) => {
 
         console.log(`✅ Created case ${newCase.id} for email ${message.id}`);
 
-        // Update processing status: analyzing
-        await supabase.from('cases').update({
-          processing_status: {
-            step: 'analyzing',
-            progress: 25,
-            message: 'AI analyserer email...'
-          }
-        }).eq('id', newCase.id);
-
-        // Automatically trigger AI analysis
+        // ============================================
+        // AUTOMATIC FLOW: analyze-email → calculate-quote
+        // ============================================
         try {
+          // Step 1: AI Analysis
           const analysisResponse = await fetch(`${supabaseUrl}/functions/v1/analyze-email`, {
             method: 'POST',
             headers: {
@@ -264,97 +334,72 @@ serve(async (req) => {
 
             console.log(`Analysis completed for case ${newCase.id}`);
 
-            // Check if case already has a quote (idempotency)
-            const { count: existingQuoteCount } = await supabase
-              .from('quotes')
-              .select('id', { count: 'exact', head: true })
-              .eq('case_id', newCase.id);
+            // Step 2: Quote Calculation
+            try {
+              const quoteResponse = await fetch(`${supabaseUrl}/functions/v1/calculate-quote`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${supabaseKey}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  caseId: newCase.id
+                }),
+              });
 
-            if ((existingQuoteCount ?? 0) === 0) {
-              // Trigger quote calculation
-              try {
-                const quoteResponse = await fetch(`${supabaseUrl}/functions/v1/calculate-quote`, {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${supabaseKey}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    caseId: newCase.id
-                  }),
+              if (quoteResponse.ok) {
+                const quoteResult = await quoteResponse.json();
+                const quoteData = quoteResult.data || quoteResult;
+
+                console.log(`✅ Quote generated for case ${newCase.id}:`, {
+                  quote_number: quoteData.quote?.quote_number,
+                  total: quoteData.total,
+                  labor_hours: quoteData.laborHours
                 });
 
-                if (quoteResponse.ok) {
-                  const quoteResult = await quoteResponse.json();
-                  const quoteData = quoteResult.data || quoteResult;
+                // Mark as complete
+                await supabase
+                  .from('cases')
+                  .update({
+                    status: 'quoted',
+                    processing_status: {
+                      step: 'complete',
+                      progress: 100,
+                      message: 'Tilbud klar!'
+                    }
+                  })
+                  .eq('id', newCase.id);
+                
+                console.log(`✅ Case ${newCase.id} fully processed`);
 
-                  console.log(`✅ Quote generated for case ${newCase.id}:`, {
-                    quote_number: quoteData.quote?.quote_number,
-                    total: quoteData.total,
-                    labor_hours: quoteData.laborHours
-                  });
-
-                  // Safety check: only update to 'quoted' if complete
-                  const hasMaterials = (quoteData.lines || []).some((l: any) => l.line_type === 'material');
-                  const isServiceCall = quoteData.metadata?.project_type === 'service_call';
-                  const hasValidTotal = quoteData.total > 0;
-
-                  if (hasValidTotal && (hasMaterials || isServiceCall)) {
-                    await supabase
-                      .from('cases')
-                      .update({
-                        status: 'quoted',
-                        processing_status: {
-                          step: 'complete',
-                          progress: 100,
-                          message: 'Tilbud klar!'
-                        }
-                      })
-                      .eq('id', newCase.id);
-                    console.log(`✅ Case ${newCase.id} status updated to 'quoted'`);
-                  } else {
-                    console.warn(`⚠️ Quote incomplete (materials=${hasMaterials}, total=${quoteData.total})`);
-                    await supabase
-                      .from('cases')
-                      .update({
-                        processing_status: {
-                          step: 'error',
-                          progress: 0,
-                          message: 'Tilbud ufuldstændigt - mangler materialer'
-                        }
-                      })
-                      .eq('id', newCase.id);
-                  }
-
-                } else {
-                  const errorText = await quoteResponse.text();
-                  console.error(`❌ Failed to generate quote for case ${newCase.id}:`, errorText);
-                  await supabase
-                    .from('cases')
-                    .update({
-                      processing_status: {
-                        step: 'error',
-                        progress: 0,
-                        message: `Tilbudsfejl: ${errorText.substring(0, 100)}`
-                      }
-                    })
-                    .eq('id', newCase.id);
-                }
-              } catch (quoteError) {
-                console.error(`❌ Error generating quote for case ${newCase.id}:`, quoteError);
+              } else {
+                const errorText = await quoteResponse.text();
+                console.error(`❌ Failed to generate quote for case ${newCase.id}:`, errorText);
                 await supabase
                   .from('cases')
                   .update({
                     processing_status: {
                       step: 'error',
                       progress: 0,
-                      message: 'Fejl ved tilbudsberegning'
+                      message: `Tilbudsfejl: ${errorText.substring(0, 100)}`,
+                      retries: 0
                     }
                   })
                   .eq('id', newCase.id);
               }
-            } else {
-              console.log(`⚠️ Case ${newCase.id} already has a quote, skipping`);
+            } catch (quoteError) {
+              console.error(`❌ Error generating quote for case ${newCase.id}:`, quoteError);
+              await supabase
+                .from('cases')
+                .update({
+                  processing_status: {
+                    step: 'error',
+                    progress: 0,
+                    message: 'Fejl ved tilbudsberegning',
+                    retries: 0
+                  }
+                })
+                .eq('id', newCase.id);
             }
           } else {
             const errorText = await analysisResponse.text();
@@ -365,7 +410,8 @@ serve(async (req) => {
                 processing_status: {
                   step: 'error',
                   progress: 0,
-                  message: `Analysefejl: ${errorText.substring(0, 100)}`
+                  message: `Analysefejl: ${errorText.substring(0, 100)}`,
+                  retries: 0
                 }
               })
               .eq('id', newCase.id);
@@ -378,7 +424,8 @@ serve(async (req) => {
               processing_status: {
                 step: 'error',
                 progress: 0,
-                message: 'Fejl ved AI-analyse'
+                message: 'Fejl ved AI-analyse',
+                retries: 0
               }
             })
             .eq('id', newCase.id);
@@ -402,14 +449,14 @@ serve(async (req) => {
       console.log('📅 Updated last_sync_at to now');
     }
 
-    console.log(`Gmail sync completed. Processed: ${processedCount}, Skipped old: ${skippedOld}, Skipped existing: ${skippedExisting}`);
+    console.log(`Gmail sync completed. Processed: ${processedCount}, Skipped existing: ${skippedExisting}, Retried failed: ${failedCases?.length || 0}`);
 
     return new Response(JSON.stringify({ 
       message: 'Gmail sync completed',
       emailsFound: messages.length,
       processed: processedCount,
-      skippedOld,
-      skippedExisting
+      skippedExisting,
+      retriedFailed: failedCases?.length || 0
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

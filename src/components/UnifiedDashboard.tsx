@@ -11,7 +11,6 @@ import { formatDate } from "@/lib/valentin-config";
 import { 
   RefreshCw, 
   Plus,
-  Brain,
   CheckCircle,
   Clock,
   AlertCircle,
@@ -21,7 +20,8 @@ import {
   Inbox,
   FileCheck,
   ThumbsUp,
-  Layers
+  Layers,
+  Loader2
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -59,6 +59,7 @@ export default function UnifiedDashboard() {
   const [cases, setCases] = useState<Case[]>([]);
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const { toast } = useToast();
 
   const loadCases = async () => {
@@ -81,7 +82,7 @@ export default function UnifiedDashboard() {
   useEffect(() => {
     loadCases();
 
-    // PERFORMANCE: Inkrementel realtime opdatering i stedet for fuld reload
+    // Realtime subscription for cases
     const channel = supabase
       .channel('cases-realtime')
       .on('postgres_changes', {
@@ -90,7 +91,6 @@ export default function UnifiedDashboard() {
         table: 'cases'
       }, (payload) => {
         console.log('📊 Case INSERT:', payload.new);
-        // Inkrementel: Tilføj ny sag til listen (hent fuld data for at få quotes relation)
         db.getCase(payload.new.id).then(fullCase => {
           setCases(prev => [fullCase, ...prev]);
         }).catch(err => {
@@ -106,19 +106,13 @@ export default function UnifiedDashboard() {
         console.log('📊 Case UPDATE:', payload.new);
         const updatedCase = payload.new as any;
 
-        // Inkrementel: Opdater eksisterende sag i listen
         setCases(prev => prev.map(c =>
           c.id === updatedCase.id
-            ? {
-                ...c,
-                ...updatedCase,
-                // Bevar quotes hvis de ikke er i payload (relations sendes ikke altid)
-                quotes: c.quotes
-              }
+            ? { ...c, ...updatedCase, quotes: c.quotes }
             : c
         ));
 
-        // Vis toast når tilbud er klar
+        // Toast when quote is ready
         if (updatedCase.processing_status?.step === 'complete') {
           toast({
             title: "✅ Tilbud Klar!",
@@ -131,7 +125,7 @@ export default function UnifiedDashboard() {
             duration: 10000,
           });
 
-          // Hent fuld case data for at opdatere quotes
+          // Fetch full case data to get quotes
           db.getCase(updatedCase.id).then(fullCase => {
             setCases(prev => prev.map(c =>
               c.id === fullCase.id ? fullCase : c
@@ -145,7 +139,6 @@ export default function UnifiedDashboard() {
         table: 'cases'
       }, (payload) => {
         console.log('📊 Case DELETE:', payload.old);
-        // Inkrementel: Fjern slettet sag fra listen
         setCases(prev => prev.filter(c => c.id !== (payload.old as any).id));
       })
       .subscribe();
@@ -156,102 +149,24 @@ export default function UnifiedDashboard() {
   }, []);
 
   const handleCaseClick = async (caseId: string) => {
+    // Find the case to check its processing status
+    const caseItem = cases.find(c => c.id === caseId);
+    const processingStatus = (caseItem as any)?.processing_status;
+    
+    // Block clicks on cases that are still processing
+    if (processingStatus?.step && 
+        processingStatus.step !== 'complete' && 
+        processingStatus.step !== 'error' &&
+        processingStatus.step !== 'pending') {
+      toast({
+        title: "Afvent behandling",
+        description: "Sagen behandles stadig. Du kan åbne den når tilbuddet er klar.",
+      });
+      return;
+    }
+
     const fullCase = await db.getCase(caseId);
     setSelectedCase(fullCase);
-  };
-
-  const handleAnalyzeCase = async (caseItem: Case) => {
-    const processingStatus = (caseItem as any).processing_status;
-    if (processingStatus?.step && processingStatus.step !== 'pending' && processingStatus.step !== 'complete' && processingStatus.step !== 'error') {
-      toast({
-        title: "Allerede i gang",
-        description: "Sagen analyseres allerede. Vent venligst.",
-      });
-      return;
-    }
-
-    if (caseItem.quotes && caseItem.quotes.length > 0) {
-      toast({
-        title: "Tilbud findes allerede",
-        description: "Der er allerede genereret et tilbud for denne sag.",
-      });
-      return;
-    }
-
-    try {
-      await supabase
-        .from('cases')
-        .update({ 
-          processing_status: { step: 'analyzing', progress: 10, message: 'AI analyserer email...' }
-        })
-        .eq('id', caseItem.id);
-
-      toast({
-        title: "Analyserer...",
-        description: "AI analyserer sagen"
-      });
-
-      const analyzeRes = await supabase.functions.invoke('analyze-email', {
-        body: {
-          emailContent: caseItem.description,
-          subject: caseItem.subject,
-          caseId: caseItem.id
-        }
-      });
-
-      if (analyzeRes.error) throw new Error(analyzeRes.error.message || 'Analysis failed');
-
-      // Unwrap response - edge functions return { ok: true, data: ... }
-      const analysisResult = analyzeRes.data?.data || analyzeRes.data;
-      await db.updateCase(caseItem.id, {
-        extracted_data: analysisResult,
-        status: 'analyzed'
-      });
-
-      toast({
-        title: "✅ Analyse Færdig",
-        description: "Beregner nu tilbud..."
-      });
-
-      const quoteRes = await supabase.functions.invoke('calculate-quote', {
-        body: { caseId: caseItem.id }
-      });
-
-      if (quoteRes.error) throw new Error(quoteRes.error.message || 'Quote calculation failed');
-
-      const quoteResult = quoteRes.data;
-      const lineCount = Array.isArray(quoteResult.lines) ? quoteResult.lines.length : 0;
-      const total = quoteResult.total ?? quoteResult.quote?.total ?? 0;
-
-      await supabase
-        .from('cases')
-        .update({ 
-          processing_status: { step: 'complete', progress: 100, message: 'Tilbud klar!' }
-        })
-        .eq('id', caseItem.id);
-
-      toast({
-        title: "✅ Tilbud Klar",
-        description: `Oprettet med ${lineCount} linjer (${total.toLocaleString('da-DK')} kr)`
-      });
-
-      await loadCases();
-    } catch (error: any) {
-      console.error('Analysis failed:', error);
-      
-      await supabase
-        .from('cases')
-        .update({ 
-          processing_status: { step: 'error', progress: 0, message: error.message || 'Analyse fejlede' }
-        })
-        .eq('id', caseItem.id);
-
-      toast({
-        title: "Fejl",
-        description: error.message || "Analyse fejlede",
-        variant: "destructive"
-      });
-    }
   };
 
   const handleDeleteCase = async (caseId: string, e: React.MouseEvent) => {
@@ -272,7 +187,6 @@ export default function UnifiedDashboard() {
       if (fetchError) throw fetchError;
 
       if (quotes && quotes.length > 0) {
-        // PERFORMANCE: Batch delete - slet alle quote_lines på én gang med IN clause
         const quoteIds = quotes.map(q => q.id);
 
         const { error: linesError } = await supabase
@@ -302,8 +216,6 @@ export default function UnifiedDashboard() {
         description: "Sagen er blevet slettet"
       });
 
-      // Inkrementel opdatering - realtime subscription vil håndtere det
-      // men for at være sikker opdaterer vi også lokalt
       setCases(prev => prev.filter(c => c.id !== caseId));
     } catch (error) {
       console.error('Delete failed:', error);
@@ -319,18 +231,20 @@ export default function UnifiedDashboard() {
 
   const triggerGmailSync = async () => {
     try {
+      setSyncing(true);
       toast({
         title: "Synkroniserer...",
         description: "Henter nye emails fra Gmail"
       });
 
-      await supabase.functions.invoke('gmail-sync');
+      const result = await supabase.functions.invoke('gmail-sync');
 
       await loadCases();
 
+      const data = result.data;
       toast({
         title: "✅ Synkronisering Færdig",
-        description: "Nye sager er hentet fra Gmail"
+        description: `Behandlet: ${data?.processed || 0}, Eksisterende: ${data?.skippedExisting || 0}`
       });
     } catch (error: any) {
       console.error('Gmail sync failed:', error);
@@ -339,11 +253,12 @@ export default function UnifiedDashboard() {
         description: error.message || "Gmail synkronisering fejlede",
         variant: "destructive"
       });
+    } finally {
+      setSyncing(false);
     }
   };
 
-  // PERFORMANCE: useMemo for stats beregning - undgår O(4n) på hver render
-  // IMPORTANT: Must be called before any early returns to follow React hooks rules
+  // Stats calculation
   const stats = useMemo(() => ({
     total: cases.length,
     new: cases.filter(c => c.status === 'new').length,
@@ -383,10 +298,15 @@ export default function UnifiedDashboard() {
             </div>
             <Button 
               onClick={triggerGmailSync}
+              disabled={syncing}
               className="btn-modern-outline bg-background/10 border-background/20 text-background hover:bg-background/20"
             >
-              <RefreshCw className="h-4 w-4" />
-              Synkroniser
+              {syncing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {syncing ? 'Synkroniserer...' : 'Synkroniser'}
             </Button>
           </div>
         </div>
@@ -501,12 +421,17 @@ export default function UnifiedDashboard() {
             <div className="space-y-3">
               {cases.map((caseItem, index) => {
                 const processingStatus = (caseItem as any).processing_status;
-                const isProcessing = processingStatus && processingStatus.step !== 'complete' && processingStatus.step !== 'pending';
+                const isProcessing = processingStatus && 
+                  processingStatus.step !== 'complete' && 
+                  processingStatus.step !== 'pending' &&
+                  processingStatus.step !== 'error';
+                const isError = processingStatus?.step === 'error';
+                const isComplete = processingStatus?.step === 'complete' || caseItem.quotes?.length > 0;
                 
                 return (
                   <div
                     key={caseItem.id}
-                    className="case-item slide-up"
+                    className={`case-item slide-up ${isProcessing ? 'opacity-70 cursor-wait' : 'cursor-pointer'}`}
                     style={{ animationDelay: `${index * 50}ms` }}
                     onClick={() => handleCaseClick(caseItem.id)}
                   >
@@ -524,12 +449,13 @@ export default function UnifiedDashboard() {
                           )}
                         </div>
 
+                        {/* Processing indicator */}
                         {isProcessing && (
                           <div className="mb-3 p-3 bg-muted rounded-lg processing-glow">
                             <div className="flex items-center gap-2 mb-2">
-                              <Clock className="h-4 w-4 animate-spin text-foreground/70" />
+                              <Loader2 className="h-4 w-4 animate-spin text-foreground/70" />
                               <span className="text-sm font-medium">
-                                {processingStatus.message}
+                                {processingStatus.message || 'Behandler...'}
                               </span>
                             </div>
                             <div className="w-full bg-border rounded-full h-1.5">
@@ -537,6 +463,18 @@ export default function UnifiedDashboard() {
                                 className="bg-foreground h-1.5 rounded-full transition-all duration-500"
                                 style={{ width: `${processingStatus.progress || 0}%` }}
                               />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Error indicator */}
+                        {isError && (
+                          <div className="mb-3 p-3 bg-destructive/10 rounded-lg border border-destructive/20">
+                            <div className="flex items-center gap-2">
+                              <AlertCircle className="h-4 w-4 text-destructive" />
+                              <span className="text-sm text-destructive">
+                                {processingStatus.message || 'Fejl under behandling'}
+                              </span>
                             </div>
                           </div>
                         )}
@@ -551,19 +489,21 @@ export default function UnifiedDashboard() {
                       </div>
                       
                       <div className="flex flex-col items-end gap-2 shrink-0">
-                        {caseItem.status === 'new' && !isProcessing && (
-                          <Button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleAnalyzeCase(caseItem);
-                            }}
-                            size="sm"
-                            className="btn-modern text-xs"
-                          >
-                            <Brain className="h-3.5 w-3.5" />
-                            AI Analyse
-                          </Button>
+                        {/* Show status indicators instead of action buttons */}
+                        {isProcessing && (
+                          <Badge variant="outline" className="text-xs">
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                            Behandler
+                          </Badge>
                         )}
+                        
+                        {isComplete && (
+                          <div className="flex items-center gap-1.5 text-green-600 text-xs">
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            <span>Tilbud klar</span>
+                          </div>
+                        )}
+
                         <Button
                           onClick={(e) => handleDeleteCase(caseItem.id, e)}
                           size="sm"
@@ -572,12 +512,6 @@ export default function UnifiedDashboard() {
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
-                        {caseItem.quotes && caseItem.quotes.length > 0 && (
-                          <div className="flex items-center gap-1.5 text-green-600 text-xs">
-                            <CheckCircle className="h-3.5 w-3.5" />
-                            <span>Tilbud klar</span>
-                          </div>
-                        )}
                       </div>
                     </div>
                   </div>

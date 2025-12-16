@@ -7,13 +7,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Case } from "@/types";
 import { formatDate, formatCurrency, getProjectTypeLabel } from "@/lib/valentin-config";
 import { db } from "@/lib/supabase-client";
-import { ArrowLeft, Brain, Calculator, CheckCircle, Sparkles } from "lucide-react";
+import { ArrowLeft, CheckCircle, Loader2, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
 
 // Lazy load heavy components
 const EnhancedQuoteViewer = lazy(() => import('./EnhancedQuoteViewer').then(m => ({ default: m.EnhancedQuoteViewer })));
-const SmartQuoteWizard = lazy(() => import('./SmartQuoteWizard'));
 
 interface CaseDetailsProps {
   case: Case;
@@ -22,113 +20,15 @@ interface CaseDetailsProps {
 }
 
 export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDetailsProps) {
-  const [loading, setLoading] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [showWizard, setShowWizard] = useState(false);
   const { toast } = useToast();
   
-  const hasDraftQuote = caseData.quotes?.some(q => q.status === 'draft');
-  const draftQuote = caseData.quotes?.find(q => q.status === 'draft');
-
-  const handleAnalyze = async () => {
-    if (caseData.quotes && caseData.quotes.length > 0) {
-      toast({
-        title: "Tilbud findes allerede",
-        description: "Der er allerede genereret et tilbud for denne sag.",
-      });
-      return;
-    }
-
-    const processingStatus = (caseData as any).processing_status;
-    if (processingStatus?.step && processingStatus.step !== 'pending' && processingStatus.step !== 'complete' && processingStatus.step !== 'error') {
-      toast({
-        title: "Allerede i gang",
-        description: "Sagen analyseres allerede. Vent venligst.",
-      });
-      return;
-    }
-
-    setAnalyzing(true);
-    try {
-      await supabase
-        .from('cases')
-        .update({ 
-          processing_status: { step: 'analyzing', progress: 10, message: 'AI analyserer email...' }
-        })
-        .eq('id', caseData.id);
-
-      const analyzeRes = await supabase.functions.invoke('analyze-email', {
-        body: {
-          emailContent: caseData.description || caseData.email_content,
-          subject: caseData.subject,
-          caseId: caseData.id
-        }
-      });
-
-      if (analyzeRes.error) {
-        throw new Error(analyzeRes.error.message || 'Analyse fejlede');
-      }
-
-      // Unwrap response - edge functions return { ok: true, data: ... }
-      const analysisResult = analyzeRes.data?.data || analyzeRes.data;
-
-      await db.updateCase(caseData.id, {
-        extracted_data: analysisResult,
-        status: 'analyzed'
-      });
-
-      toast({
-        title: "✅ AI Analyse Færdig",
-        description: "Beregner nu tilbud..."
-      });
-
-      const quoteRes = await supabase.functions.invoke('calculate-quote', {
-        body: { caseId: caseData.id }
-      });
-
-      if (quoteRes.error) {
-        throw new Error(quoteRes.error.message || 'Tilbudsberegning fejlede');
-      }
-
-      const quoteResult = quoteRes.data;
-
-      const lineCount = Array.isArray(quoteResult.lines) ? quoteResult.lines.length : 0;
-      const total = quoteResult.total ?? quoteResult.quote?.total ?? 0;
-
-      await supabase
-        .from('cases')
-        .update({ 
-          processing_status: { step: 'complete', progress: 100, message: 'Tilbud klar!' }
-        })
-        .eq('id', caseData.id);
-
-      toast({
-        title: "✅ Analyse + Tilbud Klar",
-        description: `Oprettet med ${lineCount} linjer (${total.toLocaleString('da-DK')} kr)`
-      });
-
-      onUpdate();
-    } catch (error: any) {
-      console.error('Analysis/Quote error:', error);
-      
-      await supabase
-        .from('cases')
-        .update({ 
-          processing_status: { step: 'error', progress: 0, message: error.message || 'Analyse fejlede' }
-        })
-        .eq('id', caseData.id);
-
-      toast({
-        title: "Fejl",
-        description: error.message || "Kunne ikke analysere sagen",
-        variant: "destructive"
-      });
-    } finally {
-      setAnalyzing(false);
-    }
-  };
-
   const hasQuote = caseData.quotes && caseData.quotes.length > 0;
+  const processingStatus = (caseData as any).processing_status;
+  const isProcessing = processingStatus && 
+    processingStatus.step !== 'complete' && 
+    processingStatus.step !== 'pending' &&
+    processingStatus.step !== 'error';
+  const isError = processingStatus?.step === 'error';
 
   return (
     <div className="min-h-screen bg-background">
@@ -163,6 +63,47 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
       </header>
 
       <div className="vvs-container py-8 space-y-6">
+        {/* Processing Status */}
+        {isProcessing && (
+          <div className="glow-card p-6 slide-up processing-glow">
+            <div className="flex items-center gap-4">
+              <Loader2 className="h-8 w-8 animate-spin text-foreground/70" />
+              <div className="flex-1">
+                <h3 className="font-semibold mb-1">Behandler sag...</h3>
+                <p className="text-sm text-muted-foreground mb-3">
+                  {processingStatus.message || 'Arbejder på tilbud...'}
+                </p>
+                <div className="w-full bg-border rounded-full h-2">
+                  <div 
+                    className="bg-foreground h-2 rounded-full transition-all duration-500"
+                    style={{ width: `${processingStatus.progress || 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Error Status */}
+        {isError && (
+          <div className="glow-card p-6 slide-up border-destructive/20 bg-destructive/5">
+            <div className="flex items-center gap-4">
+              <AlertCircle className="h-8 w-8 text-destructive" />
+              <div className="flex-1">
+                <h3 className="font-semibold mb-1 text-destructive">Fejl under behandling</h3>
+                <p className="text-sm text-muted-foreground">
+                  {processingStatus.message || 'Der opstod en fejl. Systemet vil automatisk prøve igen.'}
+                </p>
+                {processingStatus.retries && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Forsøg: {processingStatus.retries}/3
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Case Information */}
         <div className="glow-card p-6 slide-up">
           <h2 className="text-lg font-semibold mb-4">Sag Information</h2>
@@ -189,30 +130,17 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
             <Separator />
 
             <div className="flex gap-3 flex-wrap">
-              {!hasQuote && (
-                <Button 
-                  onClick={() => setShowWizard(true)} 
-                  className="btn-modern"
-                >
-                  <Sparkles className="h-4 w-4" />
-                  Start Smart Tilbud Generator
-                </Button>
-              )}
-
-              {hasDraftQuote && !showWizard && (
-                <Button 
-                  onClick={() => setShowWizard(true)} 
-                  className="btn-modern-outline"
-                >
-                  <Calculator className="h-4 w-4" />
-                  Rediger Draft
-                </Button>
-              )}
-
-              {hasQuote && !hasDraftQuote && (
+              {hasQuote && (
                 <div className="flex items-center gap-2 text-green-600 text-sm">
                   <CheckCircle className="h-4 w-4" />
                   <span className="font-medium">Tilbud genereret</span>
+                </div>
+              )}
+              
+              {!hasQuote && !isProcessing && !isError && (
+                <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                  <Loader2 className="h-4 w-4" />
+                  <span>Afventer behandling...</span>
                 </div>
               )}
             </div>
@@ -280,21 +208,6 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
               )}
             </div>
           </div>
-        )}
-
-        {/* Smart Quote Wizard */}
-        {showWizard && (
-          <Suspense fallback={<Skeleton className="h-96 w-full" />}>
-            <SmartQuoteWizard
-              caseData={caseData}
-              existingQuote={draftQuote}
-              onComplete={() => {
-                setShowWizard(false);
-                onUpdate();
-              }}
-              onCancel={() => setShowWizard(false)}
-            />
-          </Suspense>
         )}
 
         {/* Enhanced Quote Viewer with inline editing */}
