@@ -144,62 +144,74 @@ serve(async (req) => {
 
     console.log('📐 Profile loaded:', { type: analysis.project_type, base_hours: profile.base_hours, beta: profile.beta_default });
 
-    // ====== LÆRENDE KORREKTIONS-SYSTEM ======
-    // Find og anvend tidligere lærte rettelser
+    // ====== PERFORMANCE: PARALLEL KALD ======
+    // find-corrections og historical-analysis er uafhængige - kør parallelt
     let appliedCorrections: any[] = [];
-    try {
-      // 1) Find matchende rettelser
-      const findResp = await supabase.functions.invoke('find-corrections', {
+    let historicalData: any = null;
+
+    console.log('🚀 Starting parallel: find-corrections + historical-analysis');
+    const parallelStart = Date.now();
+
+    const [findResult, histResult] = await Promise.allSettled([
+      supabase.functions.invoke('find-corrections', {
         body: {
           project_type: analysis.project_type,
           size: analysis.estimatedSize,
           complexity: analysis.signals.complexity ?? 'medium',
           email_content: body.email_content ?? ''
         }
-      });
-      
-      const corrections = findResp.data?.data?.rules ?? [];
-      
-      if (corrections.length > 0) {
-        console.log(`🧠 Found ${corrections.length} matching correction rules`);
-        
-        // 2) Anvend rettelser på analysen
-        const applyResp = await supabase.functions.invoke('apply-corrections', {
-          body: {
-            analysis,
-            rules: corrections
-          }
-        });
-        
-        if (applyResp.data?.data) {
-          const corrected = applyResp.data.data;
-          // Opdater analysis med rettelser
-          if (corrected.analysis) {
-            analysis.signals = corrected.analysis.signals ?? analysis.signals;
-            // Gem hvilke rettelser der blev anvendt
-            appliedCorrections = corrected.applied_rules ?? [];
-            console.log(`✅ Applied ${appliedCorrections.length} corrections`);
-          }
-        }
-      }
-    } catch (e) {
-      console.log('⚠️  Correction system skipped:', e);
-    }
-
-    // Historical data (optional)
-    let historicalData: any = null;
-    try {
-      const histResp = await supabase.functions.invoke('historical-analysis', {
+      }),
+      supabase.functions.invoke('historical-analysis', {
         body: {
           projectType: analysis.project_type,
           size: analysis.estimatedSize,
           complexity: complexityToNumeric(analysis.signals.complexity ?? 'medium'),
           signals: analysis.signals ?? {}
         }
-      });
-      if (histResp.data) historicalData = histResp.data;
-    } catch (e) {
-      console.log('⚠️  Historical analysis skipped:', e);
+      })
+    ]);
+
+    console.log(`⚡ Parallel calls completed in ${Date.now() - parallelStart}ms`);
+
+    // Process historical-analysis result
+    if (histResult.status === 'fulfilled' && histResult.value.data) {
+      historicalData = histResult.value.data;
+    } else if (histResult.status === 'rejected') {
+      console.log('⚠️  Historical analysis skipped:', histResult.reason);
+    }
+
+    // Process find-corrections result and apply if needed (sequential dependency)
+    if (findResult.status === 'fulfilled') {
+      try {
+        const corrections = findResult.value.data?.data?.rules ?? [];
+
+        if (corrections.length > 0) {
+          console.log(`🧠 Found ${corrections.length} matching correction rules`);
+
+          // apply-corrections DEPENDS on find-corrections - must be sequential
+          const applyResp = await supabase.functions.invoke('apply-corrections', {
+            body: {
+              analysis,
+              rules: corrections
+            }
+          });
+
+          if (applyResp.data?.data) {
+            const corrected = applyResp.data.data;
+            // Opdater analysis med rettelser
+            if (corrected.analysis) {
+              analysis.signals = corrected.analysis.signals ?? analysis.signals;
+              // Gem hvilke rettelser der blev anvendt
+              appliedCorrections = corrected.applied_rules ?? [];
+              console.log(`✅ Applied ${appliedCorrections.length} corrections`);
+            }
+          }
+        }
+      } catch (e) {
+        console.log('⚠️  Apply-corrections skipped:', e);
+      }
+    } else {
+      console.log('⚠️  Correction system skipped:', findResult.reason);
     }
 
     const size = Number(analysis.estimatedSize);
