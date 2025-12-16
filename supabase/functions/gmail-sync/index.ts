@@ -139,11 +139,10 @@ serve(async (req) => {
           continue;
         }
 
-        // Create new case - use upsert with onConflict to handle race conditions
-        // If two concurrent calls try to insert the same email_message_id, one will be ignored
+        // Create new case - use regular insert, let DB constraint handle duplicates
         const { data: newCase, error: caseError } = await supabase
           .from('cases')
-          .upsert({
+          .insert({
             subject,
             description: body,
             email_message_id: message.id,
@@ -157,26 +156,17 @@ serve(async (req) => {
             }),
             status: 'new',
             urgency: 'normal'
-          }, {
-            onConflict: 'email_message_id',
-            ignoreDuplicates: true
           })
           .select()
           .single();
 
         if (caseError) {
-          // If duplicate, just skip (race condition handled)
-          if (caseError.code === '23505' || caseError.message?.includes('duplicate')) {
-            console.log(`Email ${message.id} already exists (concurrent insert), skipping`);
+          // Unique constraint violation (23505) = email already exists, skip silently
+          if (caseError.code === '23505') {
+            console.log(`Email ${message.id} already exists (constraint), skipping`);
             continue;
           }
           console.error('Failed to create case:', caseError);
-          continue;
-        }
-
-        // Check if this was an existing case (upsert found existing)
-        if (!newCase) {
-          console.log(`Email ${message.id} already processed (upsert), skipping`);
           continue;
         }
 
