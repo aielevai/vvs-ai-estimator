@@ -291,23 +291,9 @@ export default function UnifiedDashboard() {
       {/* Modern Header */}
       <header className="modern-header">
         <div className="vvs-container">
-          <div className="flex items-center justify-between">
-            <div className="fade-in">
-              <h1 className="text-3xl font-bold tracking-tight">Valentin VVS</h1>
-              <p className="text-background/70 mt-1 text-sm">Intelligent Tilbudssystem</p>
-            </div>
-            <Button 
-              onClick={triggerGmailSync}
-              disabled={syncing}
-              className="btn-modern-outline bg-background/10 border-background/20 text-background hover:bg-background/20"
-            >
-              {syncing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              {syncing ? 'Synkroniserer...' : 'Synkroniser'}
-            </Button>
+          <div className="fade-in">
+            <h1 className="text-3xl font-bold tracking-tight">Valentin VVS</h1>
+            <p className="text-background/70 mt-1 text-sm">Intelligent Tilbudssystem</p>
           </div>
         </div>
       </header>
@@ -379,7 +365,10 @@ export default function UnifiedDashboard() {
                   <div className="p-2 bg-muted rounded-lg">
                     <Settings className="h-4 w-4 text-muted-foreground" />
                   </div>
-                  <span className="font-medium">Avancerede Værktøjer</span>
+                  <div>
+                    <span className="font-medium">Avancerede Værktøjer</span>
+                    <p className="text-xs text-muted-foreground mt-0.5">Bruges kun ved import af nye prislister fra leverandør</p>
+                  </div>
                 </div>
                 <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform duration-200 [[data-state=open]_&]:rotate-180" />
               </div>
@@ -409,13 +398,10 @@ export default function UnifiedDashboard() {
           ) : cases.length === 0 ? (
             <div className="glow-card p-12 text-center slide-up">
               <div className="p-4 bg-muted rounded-full w-fit mx-auto mb-4">
-                <AlertCircle className="h-8 w-8 text-muted-foreground" />
+                <Inbox className="h-8 w-8 text-muted-foreground" />
               </div>
-              <p className="text-muted-foreground mb-4">Ingen sager endnu</p>
-              <Button onClick={triggerGmailSync} className="btn-modern">
-                <Plus className="h-4 w-4" />
-                Hent fra Gmail
-              </Button>
+              <p className="text-muted-foreground mb-2">Ingen sager endnu</p>
+              <p className="text-xs text-muted-foreground">Sager hentes automatisk fra Gmail hvert 5. minut</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -519,6 +505,30 @@ export default function UnifiedDashboard() {
               })}
             </div>
           )}
+        </div>
+
+        {/* Force Sync Section */}
+        <div className="mt-8 pt-6 border-t border-border text-center">
+          <p className="text-xs text-muted-foreground mb-3">
+            Sager synkroniseres automatisk fra Gmail hvert 5. minut
+          </p>
+          <Button 
+            onClick={triggerGmailSync}
+            disabled={syncing}
+            variant="outline"
+            size="sm"
+            className="text-muted-foreground"
+          >
+            {syncing ? (
+              <Loader2 className="h-3 w-3 animate-spin mr-2" />
+            ) : (
+              <RefreshCw className="h-3 w-3 mr-2" />
+            )}
+            {syncing ? 'Synkroniserer...' : 'Force Sync'}
+          </Button>
+          <p className="text-xs text-muted-foreground mt-2 opacity-70">
+            Brug kun hvis sager ikke hentes automatisk
+          </p>
         </div>
       </div>
     </div>
