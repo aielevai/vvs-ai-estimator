@@ -848,6 +848,7 @@ export type Database = {
           total_price: number | null
           unit: string | null
           unit_price: number | null
+          validated: boolean | null
         }
         Insert: {
           component_key?: string | null
@@ -864,6 +865,7 @@ export type Database = {
           total_price?: number | null
           unit?: string | null
           unit_price?: number | null
+          validated?: boolean | null
         }
         Update: {
           component_key?: string | null
@@ -880,6 +882,7 @@ export type Database = {
           total_price?: number | null
           unit?: string | null
           unit_price?: number | null
+          validated?: boolean | null
         }
         Relationships: [
           {
