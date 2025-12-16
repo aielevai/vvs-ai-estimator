@@ -341,6 +341,15 @@ export default function UnifiedDashboard() {
     }
   };
 
+  // PERFORMANCE: useMemo for stats beregning - undgår O(4n) på hver render
+  // IMPORTANT: Must be called before any early returns to follow React hooks rules
+  const stats = useMemo(() => ({
+    total: cases.length,
+    new: cases.filter(c => c.status === 'new').length,
+    quoted: cases.filter(c => c.status === 'quoted').length,
+    approved: cases.filter(c => c.status === 'approved').length,
+  }), [cases]);
+
   if (selectedCase) {
     return (
       <Suspense fallback={
@@ -360,14 +369,6 @@ export default function UnifiedDashboard() {
       </Suspense>
     );
   }
-
-  // PERFORMANCE: useMemo for stats beregning - undgår O(4n) på hver render
-  const stats = useMemo(() => ({
-    total: cases.length,
-    new: cases.filter(c => c.status === 'new').length,
-    quoted: cases.filter(c => c.status === 'quoted').length,
-    approved: cases.filter(c => c.status === 'approved').length,
-  }), [cases]);
 
   return (
     <div className="min-h-screen bg-background">
