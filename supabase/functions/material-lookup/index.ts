@@ -66,7 +66,17 @@ const COMPONENT_SEARCH_MAP: Record<string, string> = {
 // Map BOM to real products using AI hybrid search + discount codes
 async function mapBOMToProductsIntelligent(bom: BomLine[], projectType: string): Promise<any[]> {
   const materials: any[] = [];
-  
+
+  // PERFORMANCE: Pre-fetch ALL discount codes once (small table)
+  const { data: allDiscounts } = await supabaseAdmin
+    .from('discount_codes')
+    .select('discount_group, discount_percentage');
+
+  const discountMap = new Map<string, number>(
+    (allDiscounts || []).map(d => [d.discount_group, d.discount_percentage])
+  );
+  console.log(`💰 Pre-loaded ${discountMap.size} discount codes`);
+
   for (const comp of bom) {
     try {
       // 1. Check cache first
@@ -145,19 +155,16 @@ async function mapBOMToProductsIntelligent(bom: BomLine[], projectType: string):
       let finalPrice = Number(matchedProduct?.net_price || matchedProduct?.unit_price_ex_vat || 0);
       let discountApplied = 0;
 
-      // Apply discount if available
+      // Apply discount if available (using pre-fetched discountMap - O(1) lookup)
       if (matchedProduct?.supplier_item_id && finalPrice > 0) {
         // Extract prefix (first 2 chars) for discount lookup
         const prefix = String(matchedProduct.supplier_item_id).substring(0, 2);
-        
-        const { data: discount } = await supabaseAdmin
-          .from('discount_codes')
-          .select('discount_percentage')
-          .eq('discount_group', prefix)
-          .maybeSingle();
 
-        if (discount && discount.discount_percentage > 0) {
-          discountApplied = Number(discount.discount_percentage);
+        // PERFORMANCE: Use Map lookup instead of DB call
+        const discountPct = discountMap.get(prefix) || 0;
+
+        if (discountPct > 0) {
+          discountApplied = discountPct;
           finalPrice = finalPrice * (1 - discountApplied / 100);
           console.log(`💰 Discount applied: ${discountApplied}% → ${finalPrice.toFixed(2)} kr`);
         }

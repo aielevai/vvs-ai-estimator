@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -81,28 +81,72 @@ export default function UnifiedDashboard() {
   useEffect(() => {
     loadCases();
 
+    // PERFORMANCE: Inkrementel realtime opdatering i stedet for fuld reload
     const channel = supabase
       .channel('cases-realtime')
       .on('postgres_changes', {
-        event: '*',
+        event: 'INSERT',
         schema: 'public',
         table: 'cases'
       }, (payload) => {
-        console.log('📊 Case updated:', payload);
-        loadCases();
+        console.log('📊 Case INSERT:', payload.new);
+        // Inkrementel: Tilføj ny sag til listen (hent fuld data for at få quotes relation)
+        db.getCase(payload.new.id).then(fullCase => {
+          setCases(prev => [fullCase, ...prev]);
+        }).catch(err => {
+          console.log('Could not fetch new case, falling back to reload:', err);
+          loadCases();
+        });
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'cases'
+      }, (payload) => {
+        console.log('📊 Case UPDATE:', payload.new);
+        const updatedCase = payload.new as any;
 
-        if ((payload.new as any)?.processing_status?.step === 'complete') {
+        // Inkrementel: Opdater eksisterende sag i listen
+        setCases(prev => prev.map(c =>
+          c.id === updatedCase.id
+            ? {
+                ...c,
+                ...updatedCase,
+                // Bevar quotes hvis de ikke er i payload (relations sendes ikke altid)
+                quotes: c.quotes
+              }
+            : c
+        ));
+
+        // Vis toast når tilbud er klar
+        if (updatedCase.processing_status?.step === 'complete') {
           toast({
             title: "✅ Tilbud Klar!",
-            description: `Sag: ${(payload.new as any).subject || 'Ny sag'}`,
+            description: `Sag: ${updatedCase.subject || 'Ny sag'}`,
             action: (
-              <Button onClick={() => handleCaseClick((payload.new as any).id)} size="sm">
+              <Button onClick={() => handleCaseClick(updatedCase.id)} size="sm">
                 Åbn
               </Button>
             ),
             duration: 10000,
           });
+
+          // Hent fuld case data for at opdatere quotes
+          db.getCase(updatedCase.id).then(fullCase => {
+            setCases(prev => prev.map(c =>
+              c.id === fullCase.id ? fullCase : c
+            ));
+          }).catch(console.error);
         }
+      })
+      .on('postgres_changes', {
+        event: 'DELETE',
+        schema: 'public',
+        table: 'cases'
+      }, (payload) => {
+        console.log('📊 Case DELETE:', payload.old);
+        // Inkrementel: Fjern slettet sag fra listen
+        setCases(prev => prev.filter(c => c.id !== (payload.old as any).id));
       })
       .subscribe();
 
@@ -211,7 +255,7 @@ export default function UnifiedDashboard() {
 
   const handleDeleteCase = async (caseId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    
+
     if (!confirm('Er du sikker på at du vil slette denne sag?')) {
       return;
     }
@@ -227,14 +271,15 @@ export default function UnifiedDashboard() {
       if (fetchError) throw fetchError;
 
       if (quotes && quotes.length > 0) {
-        for (const quote of quotes) {
-          const { error: linesError } = await supabase
-            .from('quote_lines')
-            .delete()
-            .eq('quote_id', quote.id);
+        // PERFORMANCE: Batch delete - slet alle quote_lines på én gang med IN clause
+        const quoteIds = quotes.map(q => q.id);
 
-          if (linesError) throw linesError;
-        }
+        const { error: linesError } = await supabase
+          .from('quote_lines')
+          .delete()
+          .in('quote_id', quoteIds);
+
+        if (linesError) throw linesError;
 
         const { error: quotesError } = await supabase
           .from('quotes')
@@ -256,7 +301,9 @@ export default function UnifiedDashboard() {
         description: "Sagen er blevet slettet"
       });
 
-      await loadCases();
+      // Inkrementel opdatering - realtime subscription vil håndtere det
+      // men for at være sikker opdaterer vi også lokalt
+      setCases(prev => prev.filter(c => c.id !== caseId));
     } catch (error) {
       console.error('Delete failed:', error);
       toast({
@@ -314,12 +361,13 @@ export default function UnifiedDashboard() {
     );
   }
 
-  const stats = {
+  // PERFORMANCE: useMemo for stats beregning - undgår O(4n) på hver render
+  const stats = useMemo(() => ({
     total: cases.length,
     new: cases.filter(c => c.status === 'new').length,
     quoted: cases.filter(c => c.status === 'quoted').length,
     approved: cases.filter(c => c.status === 'approved').length,
-  };
+  }), [cases]);
 
   return (
     <div className="min-h-screen bg-background">
