@@ -127,21 +127,23 @@ serve(async (req) => {
         }
 
         // Check if this email was already processed using message ID
+        // Use maybeSingle() to avoid error when no rows found
         const { data: existingCase } = await supabase
           .from('cases')
           .select('id')
           .eq('email_message_id', message.id)
-          .single();
+          .maybeSingle();
 
         if (existingCase) {
           console.log(`Email ${message.id} already processed, skipping`);
           continue;
         }
 
-        // Create new case
+        // Create new case - use upsert with onConflict to handle race conditions
+        // If two concurrent calls try to insert the same email_message_id, one will be ignored
         const { data: newCase, error: caseError } = await supabase
           .from('cases')
-          .insert({
+          .upsert({
             subject,
             description: body,
             email_message_id: message.id,
@@ -155,12 +157,26 @@ serve(async (req) => {
             }),
             status: 'new',
             urgency: 'normal'
+          }, {
+            onConflict: 'email_message_id',
+            ignoreDuplicates: true
           })
           .select()
           .single();
 
         if (caseError) {
+          // If duplicate, just skip (race condition handled)
+          if (caseError.code === '23505' || caseError.message?.includes('duplicate')) {
+            console.log(`Email ${message.id} already exists (concurrent insert), skipping`);
+            continue;
+          }
           console.error('Failed to create case:', caseError);
+          continue;
+        }
+
+        // Check if this was an existing case (upsert found existing)
+        if (!newCase) {
+          console.log(`Email ${message.id} already processed (upsert), skipping`);
           continue;
         }
 
@@ -192,12 +208,15 @@ serve(async (req) => {
 
           if (analysisResponse.ok) {
             const analysisResult = await analysisResponse.json();
-            
+
+            // Unwrap response - edge functions return { ok: true, data: ... }
+            const analysisData = analysisResult?.data || analysisResult;
+
             // Update case with analysis + processing status
             await supabase
               .from('cases')
               .update({
-                extracted_data: analysisResult,
+                extracted_data: analysisData,
                 status: 'analyzed',
                 processing_status: {
                   step: 'materials',
