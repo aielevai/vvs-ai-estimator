@@ -4,9 +4,11 @@ import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { CheckCircle, AlertTriangle, Info, Bot, Trash2, Plus, Lightbulb, MessageSquare } from "lucide-react";
+import { CheckCircle, AlertTriangle, Info, Bot, Trash2, Plus, Lightbulb, MessageSquare, ThumbsUp, Loader2 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { CorrectionDialog } from './CorrectionDialog';
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
 interface EnhancedQuoteViewerProps {
   quote: any;
@@ -16,8 +18,8 @@ interface EnhancedQuoteViewerProps {
   emailContent?: string;
 }
 
-export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({ 
-  quote: initialQuote, 
+export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
+  quote: initialQuote,
   pricingAnalysis,
   onQuoteUpdate,
   caseId,
@@ -27,6 +29,9 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
   const [isExplanationOpen, setIsExplanationOpen] = useState(false);
   const [showCorrectionDialog, setShowCorrectionDialog] = useState(false);
   const [pendingChanges, setPendingChanges] = useState<any[]>([]);
+  const [approving, setApproving] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const { toast } = useToast();
   
   const originalValues = useRef({
     labor_hours: initialQuote?.labor_hours,
@@ -43,7 +48,7 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
   
   const checkForSignificantChanges = () => {
     const changes: any[] = [];
-    
+
     if (quote.labor_hours !== originalValues.current.labor_hours) {
       changes.push({
         field: 'labor_hours',
@@ -52,7 +57,7 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
         label: 'Arbejdstimer'
       });
     }
-    
+
     const subtotalDiff = Math.abs(quote.subtotal - originalValues.current.subtotal) / originalValues.current.subtotal;
     if (subtotalDiff > 0.05 && changes.length === 0) {
       changes.push({
@@ -62,10 +67,95 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
         label: 'Subtotal'
       });
     }
-    
+
     if (changes.length > 0) {
       setPendingChanges(changes);
       setShowCorrectionDialog(true);
+    }
+  };
+
+  // Validate quote with AI
+  const handleValidateQuote = async () => {
+    if (!quote.id) return;
+
+    setValidating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('validate-quote', {
+        body: { quote_id: quote.id }
+      });
+
+      if (error) throw error;
+
+      const validation = data?.data?.validation;
+      if (validation) {
+        setQuote({ ...quote, validation_result: validation });
+
+        if (validation.is_valid) {
+          toast({
+            title: "✅ Tilbud Valideret",
+            description: validation.summary || "Tilbuddet ser korrekt ud"
+          });
+        } else {
+          toast({
+            title: "⚠️ Validering Advarsler",
+            description: validation.summary || `${validation.issues?.length || 0} potentielle problemer fundet`,
+            variant: "destructive"
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error('Validation error:', error);
+      toast({
+        title: "Fejl",
+        description: error.message || "Kunne ikke validere tilbuddet",
+        variant: "destructive"
+      });
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  // Approve quote and save for learning
+  const handleApproveQuote = async () => {
+    if (!quote.id || !caseId) return;
+
+    // Check if there are significant changes - prompt user to save corrections first
+    const hasChanges = quote.labor_hours !== originalValues.current.labor_hours ||
+      Math.abs(quote.subtotal - originalValues.current.subtotal) / originalValues.current.subtotal > 0.05;
+
+    setApproving(true);
+    try {
+      // Call learn-from-quote to save approved quote for future learning
+      const { data, error } = await supabase.functions.invoke('learn-from-quote', {
+        body: {
+          quote_id: quote.id,
+          case_id: caseId,
+          approval_type: hasChanges ? 'corrected' : 'approved',
+          approved_by: 'user' // Could be enhanced with actual user info
+        }
+      });
+
+      if (error) throw error;
+
+      // Update local state
+      setQuote({ ...quote, status: 'approved' });
+
+      toast({
+        title: "✅ Tilbud Godkendt",
+        description: data?.data?.message || "Tilbuddet er godkendt og gemt til fremtidig læring"
+      });
+
+      // Trigger parent update
+      onQuoteUpdate?.({ ...quote, status: 'approved' });
+    } catch (error: any) {
+      console.error('Approve error:', error);
+      toast({
+        title: "Fejl",
+        description: error.message || "Kunne ikke godkende tilbuddet",
+        variant: "destructive"
+      });
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -381,6 +471,36 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
         </Alert>
       )}
 
+      {/* Validation Results */}
+      {quote.validation_result && (
+        <div className={`glow-card p-6 slide-up ${quote.validation_result.is_valid ? 'border-green-500/30' : 'border-yellow-500/30'}`} style={{ animationDelay: '140ms' }}>
+          <div className="flex items-center gap-2 mb-3">
+            {quote.validation_result.is_valid ? (
+              <CheckCircle className="h-5 w-5 text-green-600" />
+            ) : (
+              <AlertTriangle className="h-5 w-5 text-yellow-600" />
+            )}
+            <h3 className="font-semibold">AI Validering</h3>
+            <Badge variant={quote.validation_result.is_valid ? "default" : "secondary"} className="text-xs">
+              {Math.round((quote.validation_result.confidence || 0) * 100)}% konfidens
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground mb-3">{quote.validation_result.summary}</p>
+          {quote.validation_result.issues && quote.validation_result.issues.length > 0 && (
+            <div className="space-y-2">
+              {quote.validation_result.issues.map((issue: any, idx: number) => (
+                <Alert key={idx} variant={issue.severity === 'error' ? 'destructive' : 'default'} className="py-2">
+                  <AlertDescription className="text-xs">
+                    <strong>{issue.field}:</strong> {issue.message}
+                    {issue.suggestion && <span className="block mt-1 text-muted-foreground">💡 {issue.suggestion}</span>}
+                  </AlertDescription>
+                </Alert>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Price Summary */}
       <div className="glow-card p-6 slide-up" style={{ animationDelay: '150ms' }}>
         <div className="flex justify-between items-center mb-4">
@@ -389,9 +509,9 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
             <p className="text-xs text-muted-foreground">Ændringer gemmes automatisk</p>
           </div>
           {caseId && (
-            <div className="flex gap-2">
-              <Button 
-                size="sm" 
+            <div className="flex gap-2 flex-wrap">
+              <Button
+                size="sm"
                 variant="outline"
                 onClick={() => {
                   setPendingChanges([{
@@ -407,13 +527,14 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
                 <MessageSquare className="h-3.5 w-3.5 mr-1" />
                 Tilføj AI Note
               </Button>
-              <Button 
-                size="sm" 
+              <Button
+                size="sm"
                 onClick={checkForSignificantChanges}
-                className="btn-modern text-xs"
+                variant="outline"
+                className="text-xs"
               >
                 <Lightbulb className="h-3.5 w-3.5 mr-1" />
-                Lær AI fra ændringer
+                Lær AI
               </Button>
             </div>
           )}
@@ -498,6 +619,65 @@ export const EnhancedQuoteViewer: React.FC<EnhancedQuoteViewerProps> = ({
           </Collapsible>
         )}
       </div>
+
+      {/* Action Buttons */}
+      {caseId && quote.status !== 'approved' && (
+        <div className="glow-card p-6 slide-up" style={{ animationDelay: '200ms' }}>
+          <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+            <div>
+              <h3 className="font-semibold">Handlinger</h3>
+              <p className="text-sm text-muted-foreground">Valider og godkend tilbuddet for at afslutte sagen</p>
+            </div>
+            <div className="flex gap-3">
+              <Button
+                onClick={handleValidateQuote}
+                disabled={validating}
+                variant="outline"
+                className="min-w-[140px]"
+              >
+                {validating ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Validerer...
+                  </>
+                ) : (
+                  <>
+                    <Bot className="h-4 w-4 mr-2" />
+                    AI Validering
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={handleApproveQuote}
+                disabled={approving}
+                className="btn-modern min-w-[140px]"
+              >
+                {approving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Godkender...
+                  </>
+                ) : (
+                  <>
+                    <ThumbsUp className="h-4 w-4 mr-2" />
+                    Godkend Tilbud
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Approved Status */}
+      {quote.status === 'approved' && (
+        <Alert className="border-green-500/30 bg-green-500/5">
+          <CheckCircle className="h-4 w-4 text-green-600" />
+          <AlertDescription className="text-sm text-green-700">
+            <strong>Tilbud godkendt</strong> - Denne sag er afsluttet og gemt til fremtidig læring.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Correction Dialog - only render when open to avoid Suspense/hooks issues */}
       {showCorrectionDialog && (

@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { ok, err, handleOptions, normalizeCustomerSupplied } from "../_shared/http.ts";
+import { callAI, parseAIJson, type AIMessage } from "../_shared/ai-client.ts";
 
 // Fix encoding issues in email text
 function fixEncoding(text: string): string {
@@ -80,48 +81,36 @@ serve(async (req) => {
       return err('Email content required', 400);
     }
 
-    console.log('Analyzing email with GPT-5.1:', { subject, contentLength: emailContent.length });
-
-    const openAIApiKey = Deno.env.get('OPENAI_API_KEY');
-    if (!openAIApiKey) {
-      throw new Error('OpenAI API key not configured');
-    }
+    console.log('Analyzing email with GPT-5.2 (Responses API):', { subject, contentLength: emailContent.length });
 
     // Fix encoding in email content before sending to AI
     const cleanSubject = fixEncoding(subject || 'Ingen emne');
     const cleanContent = fixEncoding(emailContent);
-    
+
     const content = `EMNE: ${cleanSubject}\nINDHOLD:\n${cleanContent}`;
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openAIApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-5.1',
-        max_completion_tokens: 12000,
-        messages: [
-          { role: 'system', content: VALENTIN_AI_PROMPT },
-          { role: 'user', content }
-        ],
-      }),
-    });
+    // Use GPT-5.2 with Responses API and reasoning
+    const messages: AIMessage[] = [
+      { role: 'system', content: VALENTIN_AI_PROMPT },
+      { role: 'user', content }
+    ];
 
-    if (!response.ok) {
-      const errorData = await response.text();
-      console.error('OpenAI API error:', response.status, errorData);
-      throw new Error(`OpenAI API error: ${response.status} ${errorData}`);
-    }
-
-    const completion = await response.json();
-    let aiResult = {};
+    let aiResult: any = {};
 
     try {
-      const aiContent = completion.choices[0].message?.content || '{}';
-      console.log('Raw AI response:', aiContent);
-      aiResult = JSON.parse(aiContent);
+      const aiResponse = await callAI(messages, {
+        model: 'gpt-5.2',
+        reasoning: { effort: 'medium' },
+        max_output_tokens: 16000,
+      });
+
+      console.log('Raw AI response:', aiResponse.output_text.substring(0, 500));
+
+      if (aiResponse.thinking) {
+        console.log('AI reasoning:', aiResponse.thinking.substring(0, 300));
+      }
+
+      aiResult = parseAIJson(aiResponse.output_text);
     } catch (parseError) {
       console.error('Failed to parse AI response:', parseError);
       aiResult = {};
