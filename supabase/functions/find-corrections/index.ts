@@ -23,7 +23,7 @@ serve(async (req) => {
     let query = supabaseAdmin
       .from('correction_rules')
       .select('*')
-      .eq('active', true)
+      .eq('is_active', true)
       .order('created_at', { ascending: false });
 
     // Get all active rules first, then filter in code for complex logic
