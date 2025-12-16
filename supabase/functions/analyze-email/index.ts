@@ -81,7 +81,7 @@ serve(async (req) => {
       return err('Email content required', 400);
     }
 
-    console.log('Analyzing email with GPT-5.2 (Responses API):', { subject, contentLength: emailContent.length });
+    console.log('Analyzing email with GPT-4o:', { subject, contentLength: emailContent.length });
 
     // Fix encoding in email content before sending to AI
     const cleanSubject = fixEncoding(subject || 'Ingen emne');
@@ -89,7 +89,7 @@ serve(async (req) => {
 
     const content = `EMNE: ${cleanSubject}\nINDHOLD:\n${cleanContent}`;
 
-    // Use GPT-5.2 with Responses API and reasoning
+    // Use GPT-4o with Chat Completions API
     const messages: AIMessage[] = [
       { role: 'system', content: VALENTIN_AI_PROMPT },
       { role: 'user', content }
@@ -99,16 +99,11 @@ serve(async (req) => {
 
     try {
       const aiResponse = await callAI(messages, {
-        model: 'gpt-5.2',
-        reasoning: { effort: 'medium' },
-        max_output_tokens: 16000,
+        model: 'gpt-4o',
+        max_tokens: 16000,
       });
 
       console.log('Raw AI response:', aiResponse.output_text.substring(0, 500));
-
-      if (aiResponse.thinking) {
-        console.log('AI reasoning:', aiResponse.thinking.substring(0, 300));
-      }
 
       aiResult = parseAIJson(aiResponse.output_text);
     } catch (parseError) {

@@ -94,15 +94,15 @@ serve(async (req) => {
       original_request: project.description
     };
 
-    // Use GPT-5-mini for quick validation
+    // Use GPT-4o-mini for quick validation
     const aiResponse = await callAI(
       [
         { role: 'system', content: VALIDATION_PROMPT },
         { role: 'user', content: JSON.stringify(validationContext, null, 2) }
       ],
       {
-        model: 'gpt-5-mini',
-        max_output_tokens: 4000,
+        model: 'gpt-4o-mini',
+        max_tokens: 4000,
       }
     );
 

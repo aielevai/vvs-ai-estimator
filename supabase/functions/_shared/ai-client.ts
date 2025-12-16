@@ -1,7 +1,7 @@
-// Shared AI Client for OpenAI Responses API
-// Supports GPT-5.2, GPT-5-mini, GPT-5-nano
+// Shared AI Client for OpenAI Chat Completions API
+// Supports gpt-4o, gpt-4o-mini, gpt-4-turbo and custom models
 
-export type AIModel = 'gpt-5.2' | 'gpt-5-mini' | 'gpt-5-nano';
+export type AIModel = 'gpt-4o' | 'gpt-4o-mini' | 'gpt-4-turbo' | 'gpt-3.5-turbo' | string;
 
 export interface AIMessage {
   role: 'system' | 'user' | 'assistant';
@@ -10,32 +10,27 @@ export interface AIMessage {
 
 export interface AIRequestOptions {
   model?: AIModel;
-  reasoning?: {
-    effort: 'low' | 'medium' | 'high';
-  };
-  max_output_tokens?: number;
+  max_tokens?: number;
   temperature?: number;
 }
 
 export interface AIResponse {
   output_text: string;
-  thinking?: string;
   model: string;
   usage?: {
-    input_tokens: number;
-    output_tokens: number;
+    prompt_tokens: number;
+    completion_tokens: number;
     total_tokens: number;
   };
 }
 
 const DEFAULT_OPTIONS: AIRequestOptions = {
-  model: 'gpt-5.2',
-  reasoning: { effort: 'medium' },
-  max_output_tokens: 16000,
+  model: 'gpt-4o',
+  max_tokens: 16000,
 };
 
 /**
- * Call OpenAI Responses API
+ * Call OpenAI Chat Completions API
  * @param messages Array of messages to send
  * @param options Request options
  * @returns AI response
@@ -51,31 +46,23 @@ export async function callAI(
 
   const opts = { ...DEFAULT_OPTIONS, ...options };
 
-  // Build input array from messages
-  const input = messages.map(m => ({
-    role: m.role,
-    content: m.content
-  }));
-
   const requestBody: Record<string, any> = {
     model: opts.model,
-    input,
-    max_output_tokens: opts.max_output_tokens,
+    messages: messages.map(m => ({
+      role: m.role,
+      content: m.content
+    })),
+    max_completion_tokens: opts.max_tokens,
   };
-
-  // Add reasoning for GPT-5.2 (supports thinking/reasoning)
-  if (opts.model === 'gpt-5.2' && opts.reasoning) {
-    requestBody.reasoning = opts.reasoning;
-  }
 
   // Add temperature if specified
   if (opts.temperature !== undefined) {
     requestBody.temperature = opts.temperature;
   }
 
-  console.log(`🤖 Calling ${opts.model} with ${input.length} messages...`);
+  console.log(`🤖 Calling ${opts.model} with ${messages.length} messages...`);
 
-  const response = await fetch('https://api.openai.com/v1/responses', {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -92,28 +79,13 @@ export async function callAI(
 
   const data = await response.json();
 
-  // Extract response based on model
-  let output_text = '';
-  let thinking = '';
-
-  if (data.output_text) {
-    output_text = data.output_text;
-  } else if (data.output && Array.isArray(data.output)) {
-    // Handle multi-part response
-    for (const part of data.output) {
-      if (part.type === 'reasoning' || part.type === 'thinking') {
-        thinking += part.content || part.summary || '';
-      } else if (part.type === 'message' || part.type === 'text') {
-        output_text += part.content || '';
-      }
-    }
-  }
+  // Extract response from chat completion format
+  const output_text = data.choices?.[0]?.message?.content || '';
 
   console.log(`✅ ${opts.model} response received (${output_text.length} chars)`);
 
   return {
     output_text,
-    thinking,
     model: opts.model!,
     usage: data.usage,
   };
@@ -148,7 +120,7 @@ export function parseAIJson<T = any>(text: string): T {
 }
 
 /**
- * Quick AI call with GPT-5-nano for simple tasks
+ * Quick AI call with GPT-4o-mini for simple tasks
  */
 export async function quickAI(
   systemPrompt: string,
@@ -160,34 +132,9 @@ export async function quickAI(
       { role: 'user', content: userPrompt }
     ],
     {
-      model: 'gpt-5-nano',
-      max_output_tokens: 2000,
+      model: 'gpt-4o-mini',
+      max_tokens: 2000,
     }
   );
   return response.output_text;
-}
-
-/**
- * Reasoning AI call with GPT-5.2 for complex analysis
- */
-export async function reasoningAI(
-  systemPrompt: string,
-  userPrompt: string,
-  effort: 'low' | 'medium' | 'high' = 'medium'
-): Promise<{ output: string; thinking: string }> {
-  const response = await callAI(
-    [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ],
-    {
-      model: 'gpt-5.2',
-      reasoning: { effort },
-      max_output_tokens: 16000,
-    }
-  );
-  return {
-    output: response.output_text,
-    thinking: response.thinking || ''
-  };
 }
