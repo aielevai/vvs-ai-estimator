@@ -48,11 +48,17 @@ serve(async (req) => {
             change_description: result.description
           });
 
-          // Update rule usage stats
+          // Update rule usage stats (fetch then update - Supabase JS doesn't support SQL literals)
+          const { data: currentRule } = await supabaseAdmin
+            .from('correction_rules')
+            .select('times_applied')
+            .eq('id', rule.id)
+            .single();
+
           await supabaseAdmin
             .from('correction_rules')
             .update({
-              times_applied: supabaseAdmin.sql`times_applied + 1`,
+              times_applied: (currentRule?.times_applied || 0) + 1,
               last_applied_at: new Date().toISOString()
             })
             .eq('id', rule.id);
