@@ -161,7 +161,7 @@ serve(async (req) => {
           .single();
 
         if (caseError) {
-          // Unique constraint violation (23505) = email already exists, skip silently
+          // Unique constraint violation (23505) = email already exists; log and skip
           if (caseError.code === '23505') {
             console.log(`Email ${message.id} already exists (constraint), skipping`);
             continue;
