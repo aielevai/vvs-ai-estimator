@@ -80,22 +80,70 @@ serve(async (req) => {
 
 async function analyzeHistoricalTime(supabase: any, projectType: string, complexity: number, estimatedSize: number) {
   console.log('Analyzing historical time patterns...');
-  
-  // Get historical projects of the same type with size info
-  const { data: projects, error } = await supabase
-    .from('historical_projects')
-    .select('total_hours, complexity_signals, total_project_cost, total_materials_cost, project_description')
-    .eq('project_type', projectType)
-    .not('total_hours', 'is', null)
-    .gte('total_hours', 0.5)
-    .lte('total_hours', 500); // Reasonable bounds
 
-  if (error) {
-    console.error('Historical time query error:', error);
-    return getDefaultTimeEstimate(projectType);
+  // Get historical projects AND learned projects (approved quotes)
+  const [historicalResult, learnedResult] = await Promise.all([
+    supabase
+      .from('historical_projects')
+      .select('total_hours, complexity_signals, total_project_cost, total_materials_cost, project_description')
+      .eq('project_type', projectType)
+      .not('total_hours', 'is', null)
+      .gte('total_hours', 0.5)
+      .lte('total_hours', 500),
+    supabase
+      .from('learned_projects')
+      .select('actual_hours, actual_materials_cost, actual_total_cost, complexity, estimated_size, project_description, confidence_score')
+      .eq('project_type', projectType)
+      .eq('use_for_training', true)
+      .not('actual_hours', 'is', null)
+  ]);
+
+  const { data: historicalProjects, error: historicalError } = historicalResult;
+  const { data: learnedProjects, error: learnedError } = learnedResult;
+
+  if (historicalError) {
+    console.error('Historical time query error:', historicalError);
+  }
+  if (learnedError) {
+    console.error('Learned projects query error:', learnedError);
   }
 
-  if (!projects || projects.length < 3) {
+  // Combine both data sources
+  const projects: any[] = [];
+
+  // Add historical projects
+  if (historicalProjects) {
+    historicalProjects.forEach((p: any) => {
+      projects.push({
+        total_hours: p.total_hours,
+        complexity_signals: p.complexity_signals,
+        total_project_cost: p.total_project_cost,
+        total_materials_cost: p.total_materials_cost,
+        project_description: p.project_description,
+        source: 'historical',
+        weight: 1.0
+      });
+    });
+  }
+
+  // Add learned projects with higher weight (more recent, verified data)
+  if (learnedProjects) {
+    learnedProjects.forEach((p: any) => {
+      projects.push({
+        total_hours: p.actual_hours,
+        complexity_signals: { complexity: p.complexity },
+        total_project_cost: p.actual_total_cost,
+        total_materials_cost: p.actual_materials_cost,
+        project_description: p.project_description,
+        estimated_size: p.estimated_size,
+        source: 'learned',
+        weight: 1.5 * (p.confidence_score || 0.8) // Higher weight for learned projects
+      });
+    });
+    console.log(`📚 Including ${learnedProjects.length} learned projects in analysis`);
+  }
+
+  if (projects.length < 3) {
     console.log(`Insufficient historical data for ${projectType}, using defaults`);
     return getDefaultTimeEstimate(projectType);
   }
