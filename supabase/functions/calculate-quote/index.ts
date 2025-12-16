@@ -320,6 +320,11 @@ serve(async (req) => {
       const isCustomerSupplied = !!m.customer_supplied;
       const sale_unit = round2(m.net_unit_price * (isCustomerSupplied ? 0 : (1 + MARKUP)));
       const sale_total = round2(sale_unit * m.quantity);
+      
+      // Validated = true hvis vi har et matchet produkt med pris
+      const isValidated = m.source === 'ai_matched' || 
+                          (m.net_unit_price > 0 && m.product_code);
+      
       return {
         line_type: 'material',
         description: m.description,
@@ -330,7 +335,8 @@ serve(async (req) => {
         material_code: m.product_code,
         customer_supplied: isCustomerSupplied,
         component_key: m.component_key,
-        source: 'bom'
+        source: m.source ?? 'bom',
+        validated: isValidated
       };
     });
     
