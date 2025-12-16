@@ -426,6 +426,27 @@ export type Database = {
         }
         Relationships: []
       }
+      gmail_sync_state: {
+        Row: {
+          id: string
+          last_history_id: string | null
+          last_sync_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          last_history_id?: string | null
+          last_sync_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          last_history_id?: string | null
+          last_sync_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       historical_material_lines: {
         Row: {
           created_at: string

@@ -11,6 +11,9 @@ const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const supabase = supabaseAdmin;
 
+// Max age for emails to process (in minutes)
+const MAX_EMAIL_AGE_MINUTES = 30;
+
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -28,6 +31,23 @@ serve(async (req) => {
     if (!clientId || !clientSecret || !refreshToken) {
       throw new Error('Missing Gmail credentials');
     }
+
+    // Get last sync timestamp from database
+    const { data: syncState, error: syncStateError } = await supabase
+      .from('gmail_sync_state')
+      .select('id, last_sync_at')
+      .single();
+
+    if (syncStateError) {
+      console.log('No sync state found, will use 5 minute fallback');
+    }
+
+    // Use last sync time, or 5 minutes ago as fallback for first run
+    const lastSyncAt = syncState?.last_sync_at
+      ? new Date(syncState.last_sync_at)
+      : new Date(Date.now() - 5 * 60 * 1000);
+
+    console.log(`📅 Last sync: ${lastSyncAt.toISOString()}`);
 
     // Get new access token
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -50,9 +70,9 @@ serve(async (req) => {
     const { access_token } = await tokenResponse.json();
     console.log('Got access token successfully');
 
-    // Check for emails from the last hour to avoid processing old emails
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    const query = `after:${Math.floor(oneHourAgo.getTime() / 1000)}`;
+    // Query Gmail for emails AFTER last sync
+    const query = `after:${Math.floor(lastSyncAt.getTime() / 1000)}`;
+    console.log(`📧 Gmail query: ${query}`);
 
     // Get recent emails
     const gmailResponse = await fetch(
@@ -72,6 +92,18 @@ serve(async (req) => {
     
     if (!messages || messages.length === 0) {
       console.log('No new emails found');
+      
+      // Update sync state even if no emails
+      if (syncState?.id) {
+        await supabase
+          .from('gmail_sync_state')
+          .update({ 
+            last_sync_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', syncState.id);
+      }
+      
       return new Response(JSON.stringify({ 
         message: 'No new emails found',
         processed: 0 
@@ -82,8 +114,14 @@ serve(async (req) => {
 
     console.log(`Found ${messages.length} emails to process`);
 
+    // Calculate cutoff time for old emails
+    const emailAgeCutoff = new Date(Date.now() - MAX_EMAIL_AGE_MINUTES * 60 * 1000);
+
     // Process each email
     let processedCount = 0;
+    let skippedOld = 0;
+    let skippedExisting = 0;
+    
     for (const message of messages) {
       try {
         // Get full email details
@@ -113,6 +151,14 @@ serve(async (req) => {
         const from = fromHeader?.value || 'Unknown Sender';
         const receivedDate = dateHeader?.value || new Date().toISOString();
 
+        // Parse email date and check if too old
+        const emailDate = new Date(receivedDate);
+        if (emailDate < emailAgeCutoff) {
+          console.log(`⏭️ Email ${message.id} is too old (${emailDate.toISOString()}), skipping`);
+          skippedOld++;
+          continue;
+        }
+
         // Extract email body
         let body = '';
         if (emailData.payload?.body?.data) {
@@ -127,7 +173,6 @@ serve(async (req) => {
         }
 
         // Check if this email was already processed using message ID
-        // Use maybeSingle() to avoid error when no rows found
         const { data: existingCase } = await supabase
           .from('cases')
           .select('id')
@@ -135,11 +180,12 @@ serve(async (req) => {
           .maybeSingle();
 
         if (existingCase) {
-          console.log(`Email ${message.id} already processed, skipping`);
+          console.log(`📋 Email ${message.id} already processed, skipping`);
+          skippedExisting++;
           continue;
         }
 
-        // Create new case - use regular insert, let DB constraint handle duplicates
+        // Create new case
         const { data: newCase, error: caseError } = await supabase
           .from('cases')
           .insert({
@@ -161,16 +207,17 @@ serve(async (req) => {
           .single();
 
         if (caseError) {
-          // Unique constraint violation (23505) = email already exists; log and skip
+          // Unique constraint violation (23505) = email already exists
           if (caseError.code === '23505') {
             console.log(`Email ${message.id} already exists (constraint), skipping`);
+            skippedExisting++;
             continue;
           }
           console.error('Failed to create case:', caseError);
           continue;
         }
 
-        console.log(`Created case ${newCase.id} for email ${message.id}`);
+        console.log(`✅ Created case ${newCase.id} for email ${message.id}`);
 
         // Update processing status: analyzing
         await supabase.from('cases').update({
@@ -198,8 +245,6 @@ serve(async (req) => {
 
           if (analysisResponse.ok) {
             const analysisResult = await analysisResponse.json();
-
-            // Unwrap response - edge functions return { ok: true, data: ... }
             const analysisData = analysisResult?.data || analysisResult;
 
             // Update case with analysis + processing status
@@ -219,14 +264,14 @@ serve(async (req) => {
 
             console.log(`Analysis completed for case ${newCase.id}`);
 
-            // Tjek om case allerede har et aktivt quote (idempotens)
+            // Check if case already has a quote (idempotency)
             const { count: existingQuoteCount } = await supabase
               .from('quotes')
               .select('id', { count: 'exact', head: true })
               .eq('case_id', newCase.id);
 
             if ((existingQuoteCount ?? 0) === 0) {
-              // Automatically trigger quote calculation
+              // Trigger quote calculation
               try {
                 const quoteResponse = await fetch(`${supabaseUrl}/functions/v1/calculate-quote`, {
                   method: 'POST',
@@ -246,14 +291,10 @@ serve(async (req) => {
                   console.log(`✅ Quote generated for case ${newCase.id}:`, {
                     quote_number: quoteData.quote?.quote_number,
                     total: quoteData.total,
-                    labor_hours: quoteData.laborHours,
-                    lines_count: quoteData.lines?.length,
-                    material_lines: quoteData.lines?.filter((l: any) => l.line_type === 'material').length,
-                    valentin_materials: quoteData.lines?.filter((l: any) => l.line_type === 'material' && !l.customer_supplied).length,
-                    customer_supplied: quoteData.lines?.filter((l: any) => l.line_type === 'material' && l.customer_supplied).length
+                    labor_hours: quoteData.laborHours
                   });
 
-                  // Sikkerhedsgate: kun opdater til 'quoted' hvis komplet tilbud
+                  // Safety check: only update to 'quoted' if complete
                   const hasMaterials = (quoteData.lines || []).some((l: any) => l.line_type === 'material');
                   const isServiceCall = quoteData.metadata?.project_type === 'service_call';
                   const hasValidTotal = quoteData.total > 0;
@@ -272,8 +313,7 @@ serve(async (req) => {
                       .eq('id', newCase.id);
                     console.log(`✅ Case ${newCase.id} status updated to 'quoted'`);
                   } else {
-                    // Quote incomplete - set error status so frontend doesn't hang
-                    console.warn(`⚠️  Quote incomplete (materials=${hasMaterials}, total=${quoteData.total})`);
+                    console.warn(`⚠️ Quote incomplete (materials=${hasMaterials}, total=${quoteData.total})`);
                     await supabase
                       .from('cases')
                       .update({
@@ -288,11 +328,7 @@ serve(async (req) => {
 
                 } else {
                   const errorText = await quoteResponse.text();
-                  console.error(`❌ Failed to generate quote for case ${newCase.id}:`, {
-                    status: quoteResponse.status,
-                    error: errorText
-                  });
-                  // Set error status so frontend doesn't hang
+                  console.error(`❌ Failed to generate quote for case ${newCase.id}:`, errorText);
                   await supabase
                     .from('cases')
                     .update({
@@ -306,7 +342,6 @@ serve(async (req) => {
                 }
               } catch (quoteError) {
                 console.error(`❌ Error generating quote for case ${newCase.id}:`, quoteError);
-                // Set error status so frontend doesn't hang
                 await supabase
                   .from('cases')
                   .update({
@@ -319,12 +354,11 @@ serve(async (req) => {
                   .eq('id', newCase.id);
               }
             } else {
-              console.log(`⚠️  Case ${newCase.id} already has a quote, skipping quote generation`);
+              console.log(`⚠️ Case ${newCase.id} already has a quote, skipping`);
             }
           } else {
             const errorText = await analysisResponse.text();
             console.error(`Failed to analyze case ${newCase.id}:`, errorText);
-            // Set error status so frontend doesn't hang
             await supabase
               .from('cases')
               .update({
@@ -338,7 +372,6 @@ serve(async (req) => {
           }
         } catch (analysisError) {
           console.error(`Error analyzing case ${newCase.id}:`, analysisError);
-          // Set error status so frontend doesn't hang
           await supabase
             .from('cases')
             .update({
@@ -357,12 +390,26 @@ serve(async (req) => {
       }
     }
 
-    console.log(`Gmail sync completed. Processed ${processedCount} emails.`);
+    // Update sync state with current timestamp AFTER successful processing
+    if (syncState?.id) {
+      await supabase
+        .from('gmail_sync_state')
+        .update({ 
+          last_sync_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', syncState.id);
+      console.log('📅 Updated last_sync_at to now');
+    }
+
+    console.log(`Gmail sync completed. Processed: ${processedCount}, Skipped old: ${skippedOld}, Skipped existing: ${skippedExisting}`);
 
     return new Response(JSON.stringify({ 
       message: 'Gmail sync completed',
       emailsFound: messages.length,
-      processed: processedCount
+      processed: processedCount,
+      skippedOld,
+      skippedExisting
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
