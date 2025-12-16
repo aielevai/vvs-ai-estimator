@@ -242,7 +242,7 @@ serve(async (req) => {
                 if (quoteResponse.ok) {
                   const quoteResult = await quoteResponse.json();
                   const quoteData = quoteResult.data || quoteResult;
-                  
+
                   console.log(`✅ Quote generated for case ${newCase.id}:`, {
                     quote_number: quoteData.quote?.quote_number,
                     total: quoteData.total,
@@ -252,16 +252,16 @@ serve(async (req) => {
                     valentin_materials: quoteData.lines?.filter((l: any) => l.line_type === 'material' && !l.customer_supplied).length,
                     customer_supplied: quoteData.lines?.filter((l: any) => l.line_type === 'material' && l.customer_supplied).length
                   });
-                  
+
                   // Sikkerhedsgate: kun opdater til 'quoted' hvis komplet tilbud
                   const hasMaterials = (quoteData.lines || []).some((l: any) => l.line_type === 'material');
                   const isServiceCall = quoteData.metadata?.project_type === 'service_call';
                   const hasValidTotal = quoteData.total > 0;
-                  
+
                   if (hasValidTotal && (hasMaterials || isServiceCall)) {
                     await supabase
                       .from('cases')
-                      .update({ 
+                      .update({
                         status: 'quoted',
                         processing_status: {
                           step: 'complete',
@@ -272,27 +272,83 @@ serve(async (req) => {
                       .eq('id', newCase.id);
                     console.log(`✅ Case ${newCase.id} status updated to 'quoted'`);
                   } else {
-                    console.warn(`⚠️  Quote incomplete (materials=${hasMaterials}, total=${quoteData.total}); keeping status='analyzed'`);
+                    // Quote incomplete - set error status so frontend doesn't hang
+                    console.warn(`⚠️  Quote incomplete (materials=${hasMaterials}, total=${quoteData.total})`);
+                    await supabase
+                      .from('cases')
+                      .update({
+                        processing_status: {
+                          step: 'error',
+                          progress: 0,
+                          message: 'Tilbud ufuldstændigt - mangler materialer'
+                        }
+                      })
+                      .eq('id', newCase.id);
                   }
-                  
+
                 } else {
                   const errorText = await quoteResponse.text();
                   console.error(`❌ Failed to generate quote for case ${newCase.id}:`, {
                     status: quoteResponse.status,
                     error: errorText
                   });
+                  // Set error status so frontend doesn't hang
+                  await supabase
+                    .from('cases')
+                    .update({
+                      processing_status: {
+                        step: 'error',
+                        progress: 0,
+                        message: `Tilbudsfejl: ${errorText.substring(0, 100)}`
+                      }
+                    })
+                    .eq('id', newCase.id);
                 }
               } catch (quoteError) {
                 console.error(`❌ Error generating quote for case ${newCase.id}:`, quoteError);
+                // Set error status so frontend doesn't hang
+                await supabase
+                  .from('cases')
+                  .update({
+                    processing_status: {
+                      step: 'error',
+                      progress: 0,
+                      message: 'Fejl ved tilbudsberegning'
+                    }
+                  })
+                  .eq('id', newCase.id);
               }
             } else {
               console.log(`⚠️  Case ${newCase.id} already has a quote, skipping quote generation`);
             }
           } else {
-            console.error(`Failed to analyze case ${newCase.id}:`, await analysisResponse.text());
+            const errorText = await analysisResponse.text();
+            console.error(`Failed to analyze case ${newCase.id}:`, errorText);
+            // Set error status so frontend doesn't hang
+            await supabase
+              .from('cases')
+              .update({
+                processing_status: {
+                  step: 'error',
+                  progress: 0,
+                  message: `Analysefejl: ${errorText.substring(0, 100)}`
+                }
+              })
+              .eq('id', newCase.id);
           }
         } catch (analysisError) {
           console.error(`Error analyzing case ${newCase.id}:`, analysisError);
+          // Set error status so frontend doesn't hang
+          await supabase
+            .from('cases')
+            .update({
+              processing_status: {
+                step: 'error',
+                progress: 0,
+                message: 'Fejl ved AI-analyse'
+              }
+            })
+            .eq('id', newCase.id);
         }
 
         processedCount++;
