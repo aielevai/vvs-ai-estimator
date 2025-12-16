@@ -201,7 +201,8 @@ export default function UnifiedDashboard() {
 
       if (analyzeRes.error) throw new Error(analyzeRes.error.message || 'Analysis failed');
 
-      const analysisResult = analyzeRes.data;
+      // Unwrap response - edge functions return { ok: true, data: ... }
+      const analysisResult = analyzeRes.data?.data || analyzeRes.data;
       await db.updateCase(caseItem.id, {
         extracted_data: analysisResult,
         status: 'analyzed'

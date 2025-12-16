@@ -94,15 +94,16 @@ serve(async (req) => {
       original_request: project.description
     };
 
-    // Use GPT-5-mini for quick validation
+    // Use GPT-5.2 with low reasoning for quick validation (Option A)
     const aiResponse = await callAI(
       [
         { role: 'system', content: VALIDATION_PROMPT },
         { role: 'user', content: JSON.stringify(validationContext, null, 2) }
       ],
       {
-        model: 'gpt-5-mini',
-        max_output_tokens: 4000,
+        model: 'gpt-5.2',
+        reasoning_effort: 'low',
+        max_completion_tokens: 4000,
       }
     );
 
