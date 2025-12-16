@@ -1,5 +1,5 @@
-// Shared AI Client for OpenAI Responses API
-// Supports GPT-5.2, GPT-5-mini, GPT-5-nano
+// Shared AI Client for OpenAI Chat Completions API
+// Supports GPT-5.2, GPT-5-mini, GPT-5-nano (Option A: All use GPT-5.2 with different reasoning levels)
 
 export type AIModel = 'gpt-5.2' | 'gpt-5-mini' | 'gpt-5-nano';
 
@@ -10,35 +10,30 @@ export interface AIMessage {
 
 export interface AIRequestOptions {
   model?: AIModel;
-  reasoning?: {
-    effort: 'low' | 'medium' | 'high';
-  };
-  max_output_tokens?: number;
+  reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  max_completion_tokens?: number;
   temperature?: number;
 }
 
 export interface AIResponse {
   output_text: string;
-  thinking?: string;
   model: string;
   usage?: {
-    input_tokens: number;
-    output_tokens: number;
+    prompt_tokens: number;
+    completion_tokens: number;
     total_tokens: number;
   };
 }
 
 const DEFAULT_OPTIONS: AIRequestOptions = {
   model: 'gpt-5.2',
-  reasoning: { effort: 'medium' },
-  max_output_tokens: 16000,
+  reasoning_effort: 'medium',
+  max_completion_tokens: 16000,
 };
 
 /**
- * Call OpenAI Responses API
- * @param messages Array of messages to send
- * @param options Request options
- * @returns AI response
+ * Call OpenAI Chat Completions API
+ * Uses /v1/chat/completions endpoint with GPT-5.x models
  */
 export async function callAI(
   messages: AIMessage[],
@@ -51,21 +46,19 @@ export async function callAI(
 
   const opts = { ...DEFAULT_OPTIONS, ...options };
 
-  // Build input array from messages
-  const input = messages.map(m => ({
-    role: m.role,
-    content: m.content
-  }));
-
+  // Build request body per OpenAI Chat Completions spec
   const requestBody: Record<string, any> = {
     model: opts.model,
-    input,
-    max_output_tokens: opts.max_output_tokens,
+    messages: messages.map(m => ({
+      role: m.role,
+      content: m.content
+    })),
+    max_completion_tokens: opts.max_completion_tokens,
   };
 
-  // Add reasoning for GPT-5.2 (supports thinking/reasoning)
-  if (opts.model === 'gpt-5.2' && opts.reasoning) {
-    requestBody.reasoning = opts.reasoning;
+  // Add reasoning_effort for thinking capability (GPT-5.2 supports this)
+  if (opts.reasoning_effort && opts.reasoning_effort !== 'none') {
+    requestBody.reasoning_effort = opts.reasoning_effort;
   }
 
   // Add temperature if specified
@@ -73,9 +66,9 @@ export async function callAI(
     requestBody.temperature = opts.temperature;
   }
 
-  console.log(`🤖 Calling ${opts.model} with ${input.length} messages...`);
+  console.log(`🤖 Calling ${opts.model} (reasoning: ${opts.reasoning_effort || 'none'}) with ${messages.length} messages...`);
 
-  const response = await fetch('https://api.openai.com/v1/responses', {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -92,28 +85,13 @@ export async function callAI(
 
   const data = await response.json();
 
-  // Extract response based on model
-  let output_text = '';
-  let thinking = '';
-
-  if (data.output_text) {
-    output_text = data.output_text;
-  } else if (data.output && Array.isArray(data.output)) {
-    // Handle multi-part response
-    for (const part of data.output) {
-      if (part.type === 'reasoning' || part.type === 'thinking') {
-        thinking += part.content || part.summary || '';
-      } else if (part.type === 'message' || part.type === 'text') {
-        output_text += part.content || '';
-      }
-    }
-  }
+  // Extract response from standard chat completion format
+  const output_text = data.choices?.[0]?.message?.content || '';
 
   console.log(`✅ ${opts.model} response received (${output_text.length} chars)`);
 
   return {
     output_text,
-    thinking,
     model: opts.model!,
     usage: data.usage,
   };
@@ -148,7 +126,8 @@ export function parseAIJson<T = any>(text: string): T {
 }
 
 /**
- * Quick AI call with GPT-5-nano for simple tasks
+ * Quick AI call with GPT-5.2 (low reasoning) for simple tasks
+ * Option A: Use GPT-5.2 for all tasks with different reasoning levels
  */
 export async function quickAI(
   systemPrompt: string,
@@ -160,21 +139,22 @@ export async function quickAI(
       { role: 'user', content: userPrompt }
     ],
     {
-      model: 'gpt-5-nano',
-      max_output_tokens: 2000,
+      model: 'gpt-5.2',
+      reasoning_effort: 'low',
+      max_completion_tokens: 4000,
     }
   );
   return response.output_text;
 }
 
 /**
- * Reasoning AI call with GPT-5.2 for complex analysis
+ * Reasoning AI call with GPT-5.2 (high reasoning) for complex analysis
  */
 export async function reasoningAI(
   systemPrompt: string,
   userPrompt: string,
-  effort: 'low' | 'medium' | 'high' = 'medium'
-): Promise<{ output: string; thinking: string }> {
+  effort: 'low' | 'medium' | 'high' | 'xhigh' = 'high'
+): Promise<string> {
   const response = await callAI(
     [
       { role: 'system', content: systemPrompt },
@@ -182,12 +162,9 @@ export async function reasoningAI(
     ],
     {
       model: 'gpt-5.2',
-      reasoning: { effort },
-      max_output_tokens: 16000,
+      reasoning_effort: effort,
+      max_completion_tokens: 20000,
     }
   );
-  return {
-    output: response.output_text,
-    thinking: response.thinking || ''
-  };
+  return response.output_text;
 }

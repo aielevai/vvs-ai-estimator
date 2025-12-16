@@ -44,18 +44,20 @@ export default function SmartQuoteCollaborator({ onQuoteGenerated }: SmartQuoteC
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke('analyze-email', {
-        body: { 
+        body: {
           subject: 'Smart Quote',
-          content: projectDescription
+          emailContent: projectDescription
         }
       });
 
       if (error) throw error;
 
-      setEmailAnalysis(data);
-      
+      // Unwrap response - edge functions return { ok: true, data: ... }
+      const analysisData = data?.data || data;
+      setEmailAnalysis(analysisData);
+
       // Get AI hour suggestion
-      const suggestedHours = data.pricing_hints?.base_hours_estimate || 4;
+      const suggestedHours = analysisData?.pricing_hints?.base_hours_estimate || 4;
       setAiSuggestedHours(suggestedHours);
       setUserHours(suggestedHours);
 

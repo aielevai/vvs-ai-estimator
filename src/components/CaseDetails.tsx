@@ -69,7 +69,8 @@ export default function CaseDetails({ case: caseData, onBack, onUpdate }: CaseDe
         throw new Error(analyzeRes.error.message || 'Analyse fejlede');
       }
 
-      const analysisResult = analyzeRes.data;
+      // Unwrap response - edge functions return { ok: true, data: ... }
+      const analysisResult = analyzeRes.data?.data || analyzeRes.data;
 
       await db.updateCase(caseData.id, {
         extracted_data: analysisResult,
